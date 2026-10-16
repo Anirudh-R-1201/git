@@ -14,7 +14,7 @@ USAGE='[--json] commit <branch> <payload> [--expect <checkpoint>]
    or: tag <name> <checkpoint>
    or: label (add | remove) <name> <checkpoint>...
    or: label resolve <name>
-   or: merge <branch> <checkpoint> [--result <payload>] [--no-ff]
+   or: merge <branch> <checkpoint> [--result <payload>] [--no-ff] [--retry <n>]
    or: merge-preview <checkpoint> <checkpoint>
    or: rebase <branch> <onto>
    or: cherry-pick <branch> <checkpoint>
@@ -33,6 +33,12 @@ USAGE='[--json] commit <branch> <payload> [--expect <checkpoint>]
 
 tmp="$GIT_DIR/cs-tmp.$$"
 trap 'rm -f "$tmp".*' 0
+
+# A conditional update lost a race; callers may retry on this exit status.
+stale () {
+	echo >&2 "STALE_TIP"
+	exit 75
+}
 
 # Print the full ID of checkpoint $1, or die. Context branch names win over code refs.
 rev () {
@@ -82,7 +88,7 @@ cmd_commit () {
 	case "$3" in ""|--expect) ;; *) usage ;; esac
 	tip=$(git rev-parse -q --verify "$(ref "$branch")")
 	commit=$(checkpoint) || exit
-	git update-ref --create-reflog "$(ref "$branch")" $commit "${expect:-$tip}" || die "STALE_TIP"
+	git update-ref --create-reflog "$(ref "$branch")" $commit "${expect:-$tip}" || stale
 	echo $commit
 }
 
@@ -235,24 +241,39 @@ cmd_merge_preview () {
 }
 
 cmd_merge () {
-	branch=$1 name=$2 result= noff=
-	ours=$(git rev-parse --verify "$(ref "$branch")") &&
-	theirs=$(rev "$2") || exit
+	branch=$1 name=$2 result= noff= retry=0
 	shift 2
 	while test $# -gt 0
 	do
 		case "$1" in
 		--result) result=$2; shift ;;
 		--no-ff) noff=1 ;;
+		--retry) retry=$2; shift ;;
 		*) usage ;;
 		esac
 		shift
 	done
+	n=0
+	while :
+	do
+		(merge_once)
+		status=$?
+		test $status = 75 && test $n -lt $retry || return $status
+		n=$((n + 1))
+		# Exponential backoff with per-process jitter, capped at about six seconds.
+		sleep $(awk -v n=$n -v seed=$$ 'BEGIN { srand(seed * 64 + n); printf "%.2f", rand() * 0.1 * 2 ^ (n < 6 ? n : 6) }')
+	done
+}
+
+merge_once () {
+	ours=$(git rev-parse --verify "$(ref "$branch")") &&
+	theirs=$(rev "$name") || exit
 	git merge-base --is-ancestor $theirs $ours && return
 	if git merge-base --is-ancestor $ours $theirs
 	then
 		test -n "$noff$result" || {
-			git update-ref --create-reflog "$(ref "$branch")" $theirs $ours && echo $theirs
+			git update-ref --create-reflog "$(ref "$branch")" $theirs $ours || stale
+			echo $theirs
 			return
 		}
 		test -n "$result" || {

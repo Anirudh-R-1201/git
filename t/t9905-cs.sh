@@ -197,6 +197,37 @@ test_expect_success 'merge --result is recorded even when it could fast-forward'
 	git rev-parse refs/cs/heads/r1^2
 '
 
+# Publish six branches into one shared branch at the same time.
+publish_in_parallel () {
+	for i in 1 2 3 4 5 6
+	do
+		git cs merge shared "pub$i" --retry 30 >/dev/null &
+	done
+	wait
+}
+
+test_expect_success 'merge --retry lets parallel publishers all land' '
+	git cs branch shared $base &&
+	for i in 1 2 3 4 5 6
+	do
+		git cs show $base |
+		jq --arg id "p$i" ".active += [\$id] | .chunks += [{id: \$id}]" >"pub$i.json" &&
+		git cs branch "pub$i" $base &&
+		git cs commit "pub$i" "pub$i.json" || return 1
+	done &&
+	publish_in_parallel &&
+	git cs show shared | jq -c "[.active[] | select(startswith(\"p\"))]" >actual &&
+	echo "[\"p1\",\"p2\",\"p3\",\"p4\",\"p5\",\"p6\"]" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'a lost race exits 75 without --retry' '
+	tip=$(git rev-parse refs/cs/heads/shared) &&
+	payload "[\"m1\"]" p.json &&
+	git cs commit shared p.json --expect $tip &&
+	test_expect_code 75 git cs commit shared p.json --expect $tip
+'
+
 test_expect_success 'merge accepts a supplied result' '
 	git cs branch c $base &&
 	ctx c "[\"m1\",\"b1\"]" &&

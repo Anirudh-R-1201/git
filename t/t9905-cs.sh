@@ -4,229 +4,139 @@ test_description='git cs context histories'
 
 . ./test-lib.sh
 
-if ! command -v jq >/dev/null
-then
-	skip_all='skipping git cs tests, jq not available'
-	test_done
-fi
-
-# Write a payload with the given active list over a fixed chunk set.
-payload () {
-	printf '{"schema":"cs/1","active":%s,"chunks":[{"id":"m1"},{"id":"m2"},{"id":"a1"},{"id":"b1"}]}' "$1" >"$2"
+kind_of () {
+	git cs show "$1" | sed -n "1s/^kind: //p"
 }
 
-ctx () {
-	payload "$2" p.json &&
-	git cs commit "$1" p.json
-}
-
-active () {
-	git cs show "$1" | jq -c .active
-}
-
-test_expect_success 'commit stores context without touching code refs' '
+test_expect_success 'commit -m stores one typed message without touching code' '
 	test_commit code &&
-	base=$(ctx main "[\"m1\",\"m2\"]") &&
+	base=$(git cs commit main -m "Investigate SQLite") &&
 	test "$(git rev-parse HEAD)" = "$(git rev-parse code)" &&
-	test "$(active $base)" = "[\"m1\",\"m2\"]" &&
-	git cs log main >log &&
-	grep -c "^[0-9a-f]* .* cs checkpoint$" log >count &&
-	echo 1 >expect &&
-	test_cmp expect count &&
-	grep "^    + m1$" log &&
-	grep "^    + m2$" log
-'
-
-test_expect_success 'commit -m appends plain messages without a payload' '
-	first=$(git cs commit notes -m "Investigate SQLite") &&
-	git cs commit notes -m "Use WAL mode" --kind learning &&
-	git cs show notes | jq -c "[.chunks[] | {kind, body}] | sort_by(.body)" >actual &&
-	echo "[{\"kind\":\"message\",\"body\":\"Investigate SQLite\"},{\"kind\":\"learning\",\"body\":\"Use WAL mode\"}]" >expect &&
-	test_cmp expect actual &&
-	git cs show notes | jq -r ".active | length" >count &&
-	echo 2 >expect &&
-	test_cmp expect count &&
-	git cs log notes >log &&
-	grep "Use WAL mode$" log &&
-	git cs show notes --messages | sed "s/^m[0-9a-f]* //" >actual &&
-	printf "message: Investigate SQLite\nlearning: Use WAL mode\n" >expect &&
-	test_cmp expect actual &&
-	test_expect_code 75 git cs commit notes -m late --expect $first &&
-	test_must_fail git cs commit notes p.json -m both
-'
-
-test_expect_success 'commit refuses a stale expected tip' '
-	payload "[\"m1\"]" p.json &&
-	tip=$(git cs commit main p.json --expect $base) &&
-	test_must_fail git cs commit main p.json --expect $base &&
-	test "$(git rev-parse refs/cs/heads/main)" = $tip
-'
-
-test_expect_success '--json reports results and errors' '
-	git cs --json commit main p.json --expect $tip >ok.json &&
-	jq -e ".ok and (.output | length == 40)" ok.json &&
-	test_must_fail git cs --json commit main p.json --expect $tip >stale.json &&
-	jq -e ".ok == false and (.error | contains(\"STALE_TIP\"))" stale.json
-'
-
-test_expect_success 'commit rejects malformed payloads' '
-	payload "[\"m1\",\"m1\"]" dup.json &&
-	payload "[\"zz\"]" missing.json &&
-	echo "{\"schema\":\"cs/1\",\"active\":[\"m1\"],\"chunks\":[{\"id\":\"m1\",\"body\":\"x\"}]}" >changed.json &&
-	test_must_fail git cs commit main dup.json &&
-	test_must_fail git cs commit main missing.json &&
-	test_must_fail git cs commit main changed.json
-'
-
-test_expect_success 'commit rejects duplicate or unsafe chunk IDs and loose sources' '
-	echo "{\"schema\":\"cs/1\",\"active\":[\"m1\"],\"chunks\":[{\"id\":\"m1\"},{\"id\":\"m1\",\"body\":\"x\"}]}" >twice.json &&
-	echo "{\"schema\":\"cs/1\",\"active\":[\"../m\"],\"chunks\":[{\"id\":\"../m\"}]}" >slash.json &&
-	echo "{\"schema\":\"cs/1\",\"active\":[\"s\"],\"chunks\":[{\"id\":\"s\",\"sources\":[\"HEAD\"]}]}" >loose.json &&
-	test_must_fail git cs commit other twice.json &&
-	test_must_fail git cs commit other slash.json &&
-	test_must_fail git cs commit other loose.json
-'
-
-test_expect_success 'commands refuse code commits as checkpoints' '
-	old=$(git rev-parse refs/cs/heads/main) &&
-	test_must_fail git cs reset main HEAD &&
-	test_must_fail git cs branch other HEAD &&
-	test_must_fail git cs tag other HEAD &&
-	test_must_fail git cs pin HEAD &&
-	test_must_fail git cs merge main HEAD &&
-	test_must_fail git cs commit-code --context HEAD -- --allow-empty -m nope &&
-	test "$(git rev-parse refs/cs/heads/main)" = $old
-'
-
-test_expect_success 'chunk bytes survive escapes unchanged' '
-	cat >esc.json <<-\EOF &&
-	{"schema":"cs/1","active":["e"],"chunks":[{"id":"e","body":"a\nb \\t \\n"}]}
-	EOF
-	e=$(git cs commit esc esc.json) &&
-	jq -cS .chunks esc.json >expect &&
-	git cs show $e | jq -cS .chunks >actual &&
+	git ls-tree --name-only $base >names &&
+	echo message >expect &&
+	test_cmp expect names &&
+	git cs show $base >actual &&
+	printf "kind: message\n\nInvestigate SQLite\n" >expect &&
 	test_cmp expect actual
+'
+
+test_expect_success 'commit takes a kind, an optional code commit and a message file' '
+	printf "Use WAL mode\n\nback\\\\slash and \\\\n stay literal\n" >msg &&
+	two=$(git cs commit main -F msg --kind learning --code HEAD) &&
+	git cs show $two >actual &&
+	{
+		echo "kind: learning" &&
+		echo "code: $(git rev-parse HEAD)" &&
+		echo &&
+		cat msg
+	} >expect &&
+	test_cmp expect actual &&
+	git log -1 --format=%s $two >subject &&
+	echo "learning: Use WAL mode" >expect &&
+	test_cmp expect subject
+'
+
+test_expect_success 'commit rejects bad kinds, missing code commits and empty messages' '
+	test_must_fail git cs commit main -m x --kind "Bad Kind" &&
+	test_must_fail git cs commit main -m x --code nope &&
+	test_must_fail git cs commit main -m "" &&
+	test_must_fail git cs commit "bad..name" -m x 2>err &&
+	test_grep "invalid context branch" err
+'
+
+test_expect_success 'commit refuses a stale expected tip with exit 75' '
+	tip=$(git rev-parse refs/cs/heads/main) &&
+	git cs commit main -m three --expect $tip &&
+	test_expect_code 75 git cs commit main -m late --expect $tip 2>err &&
+	echo STALE_TIP >expect &&
+	test_cmp expect err
+'
+
+test_expect_success 'context lists every message oldest first' '
+	git cs context main | sed "s/^[0-9a-f]* //" >actual &&
+	cat >expect <<-\EOF &&
+	message: Investigate SQLite
+	learning: Use WAL mode
+
+	back\slash and \n stay literal
+	message: three
+	EOF
+	test_cmp expect actual
+'
+
+test_expect_success 'log shows one line per checkpoint' '
+	git cs log main >log &&
+	test_line_count = 3 log &&
+	head -n 1 log >top &&
+	test_grep "message: three$" top
 '
 
 test_expect_success 'checkpoint arguments take context branch names first' '
 	git cs branch master $base &&
 	test "$(git cs show master)" = "$(git cs show $base)" &&
-	git cs pin master &&
-	git rev-parse refs/cs/pins/$base &&
-	git cs unpin master &&
-	test_must_fail git rev-parse -q --verify refs/cs/pins/$base &&
-	git cs diff main master &&
-	git cs switch w0 master &&
-	test "$(git cs show @w0)" = "$(git cs show $base)" &&
 	git update-ref -d refs/cs/heads/master &&
-	test_must_fail git cs show master
+	test_must_fail git cs show master 2>err &&
+	test_grep "not a cs checkpoint" err &&
+	test_must_fail git cs reset main HEAD
 '
 
-test_expect_success 'show round-trips through commit' '
-	git cs show $base >out.json &&
-	again=$(git cs commit main out.json) &&
-	test "$(git rev-parse $base^{tree})" = "$(git rev-parse $again^{tree})"
-'
-
-test_expect_success 'an empty active view is valid' '
-	payload "[]" empty.json &&
-	git cs branch empty $base &&
-	git cs commit empty empty.json &&
-	test "$(active refs/cs/heads/empty)" = "[]"
-'
-
-test_expect_success 'diff reports dropped, added and reordered chunks' '
-	b=$(ctx diffs "[\"m2\",\"m1\",\"a1\"]") &&
-	git cs diff $base $b >actual &&
-	printf "+ a1\n~ reordered\n" >expect &&
+test_expect_success 'diff lists the messages each side has' '
+	git cs diff $base main | sed "s/ [0-9a-f]* / /" >actual &&
+	printf "+ message: three\n+ learning: Use WAL mode\n" >expect &&
 	test_cmp expect actual
 '
 
-test_expect_success 'branch, reset and reflog keep earlier tips' '
+test_expect_success 'branch, switch, reset and reflog' '
 	git cs branch retry $base &&
 	test_must_fail git cs branch retry $base &&
-	tip=$(ctx retry "[\"m1\"]") &&
-	git cs reset retry $base &&
-	test "$(git rev-parse refs/cs/recovery/retry)" = $tip &&
-	git cs reflog retry >log &&
+	git cs switch -c w1 feat $base &&
+	tip=$(git cs commit @w1 -m "via workspace") &&
+	test "$(git rev-parse refs/cs/heads/feat)" = $tip &&
+	git cs reset feat $base &&
+	test "$(git rev-parse refs/cs/recovery/feat)" = $tip &&
+	git cs reflog feat >log &&
 	test_line_count = 3 log
 '
 
-test_expect_success 'switch selects a branch per workspace' '
-	git cs switch -c w1 feat $base &&
-	git cs switch w2 retry &&
-	tip=$(ctx @w1 "[\"m1\"]") &&
-	test "$(git rev-parse refs/cs/heads/feat)" = $tip &&
-	test "$(git rev-parse refs/cs/heads/retry)" = $base &&
-	git cs log @w1 >log &&
-	grep "^    - m2$" log &&
-	test $(grep -c "^[0-9a-f]" log) = 2 &&
-	test_must_fail git cs switch w3 nope
+test_expect_success 'tags and labels name exact checkpoints' '
+	git cs tag v1 $base &&
+	test_must_fail git cs tag v1 main &&
+	git cs label add ticket $base main &&
+	git cs label resolve ticket >members &&
+	test_line_count = 2 members &&
+	git cs label remove ticket $base &&
+	git cs label resolve ticket >members &&
+	test_line_count = 1 members
 '
 
-test_expect_success 'branch --through creates a derived prefix view' '
-	git cs branch cut $base --through m1 &&
-	test "$(active refs/cs/heads/cut)" = "[\"m1\"]" &&
-	git log -1 --format=%s refs/cs/heads/cut >msg &&
-	grep "derived view" msg &&
-	test_must_fail git cs branch cut2 $base --through nope
-'
-
-test_expect_success 'merge takes the ordered union of both sides' '
+test_expect_success 'merge fast-forwards, reports up to date, or records a merge checkpoint' '
 	git cs branch a $base &&
 	git cs branch b $base &&
-	ctx a "[\"m1\",\"m2\",\"a1\"]" &&
-	ctx b "[\"m1\",\"m2\",\"b1\"]" &&
-	git cs merge-preview refs/cs/heads/a refs/cs/heads/b >preview &&
-	test "$(jq -c .active preview)" = "[\"m1\",\"m2\",\"a1\",\"b1\"]" &&
-	m=$(git cs merge a refs/cs/heads/b) &&
-	test "$(active $m)" = "[\"m1\",\"m2\",\"a1\",\"b1\"]" &&
-	git rev-list --parents -1 $m >parents &&
-	test $(wc -w <parents) = 3 &&
-	git cs log a >log &&
-	head -n 2 log >top &&
-	grep "cs merge refs/cs/heads/b (merge)$" top &&
-	grep "^    + b1$" top
-'
-
-test_expect_success 'merge reports order conflicts and keeps the branch' '
-	git cs branch x $base &&
-	git cs branch y $base &&
-	ctx x "[\"m2\",\"m1\"]" &&
-	ctx y "[\"m1\",\"m2\",\"b1\"]" &&
-	old=$(git rev-parse refs/cs/heads/y) &&
-	test_must_fail git cs merge y refs/cs/heads/x &&
-	test "$(git rev-parse refs/cs/heads/y)" = $old
-'
-
-test_expect_success 'merge fast-forwards unless --no-ff' '
+	git cs commit a -m "from a" &&
+	git cs commit b -m "from b" &&
 	git cs branch ff $base &&
-	git cs branch noff $base &&
-	git cs merge ff refs/cs/heads/x 2>err &&
+	git cs merge ff a 2>err &&
 	echo Fast-forward >expect &&
 	test_cmp expect err &&
-	git cs merge ff $base 2>err >out &&
+	git cs merge ff $base 2>err &&
 	echo "Already up to date" >expect &&
 	test_cmp expect err &&
-	git rev-parse refs/cs/heads/ff >expect &&
-	test_cmp expect out &&
-	git cs --json merge noff refs/cs/heads/x --no-ff >noff.json &&
-	jq -e ".ok and .note == \"Merge checkpoint\"" noff.json &&
-	git update-ref refs/cs/heads/noff $base &&
-	test "$(git rev-parse refs/cs/heads/ff)" = "$(git rev-parse refs/cs/heads/x)" &&
-	git cs merge noff refs/cs/heads/x --no-ff &&
-	test "$(active refs/cs/heads/noff)" = "[\"m2\",\"m1\"]" &&
-	git rev-parse refs/cs/heads/noff^2
+	m=$(git cs merge a b 2>err) &&
+	echo "Merge checkpoint" >expect &&
+	test_cmp expect err &&
+	test "$(kind_of $m)" = merge &&
+	git rev-parse $m^2 &&
+	git cs context a | sed "s/^[0-9a-f]* //" | sort >actual &&
+	printf "message: Investigate SQLite\nmessage: from a\nmessage: from b\n" >expect &&
+	test_cmp expect actual
 '
 
-test_expect_success 'merge --result is recorded even when it could fast-forward' '
-	git cs branch r1 $base &&
-	git cs branch r2 $base &&
-	ctx r2 "[\"m1\",\"m2\",\"b1\"]" &&
-	payload "[\"b1\"]" r.json &&
-	git cs merge r1 refs/cs/heads/r2 --result r.json &&
-	test "$(active refs/cs/heads/r1)" = "[\"b1\"]" &&
-	git rev-parse refs/cs/heads/r1^2
+test_expect_success 'merge --no-ff and -m record an explicit merge' '
+	git cs branch noff $base &&
+	m=$(git cs merge noff b --no-ff -m "take b") &&
+	git rev-parse $m^2 &&
+	git cs show $m >actual &&
+	test_grep "^take b$" actual
 '
 
 # Publish six branches into one shared branch at the same time.
@@ -242,140 +152,90 @@ test_expect_success 'merge --retry lets parallel publishers all land' '
 	git cs branch shared $base &&
 	for i in 1 2 3 4 5 6
 	do
-		git cs show $base |
-		jq --arg id "p$i" ".active += [\$id] | .chunks += [{id: \$id}]" >"pub$i.json" &&
 		git cs branch "pub$i" $base &&
-		git cs commit "pub$i" "pub$i.json" || return 1
+		git cs commit "pub$i" -m "p$i" || return 1
 	done &&
 	publish_in_parallel &&
-	git cs show shared | jq -c "[.active[] | select(startswith(\"p\"))]" >actual &&
-	echo "[\"p1\",\"p2\",\"p3\",\"p4\",\"p5\",\"p6\"]" >expect &&
+	git cs context shared | sed "s/^[0-9a-f]* message: //" | grep "^p" | sort >actual &&
+	printf "p1\np2\np3\np4\np5\np6\n" >expect &&
 	test_cmp expect actual
 '
 
-test_expect_success 'a lost race exits 75 without --retry' '
-	tip=$(git rev-parse refs/cs/heads/shared) &&
-	payload "[\"m1\"]" p.json &&
-	git cs commit shared p.json --expect $tip &&
-	test_expect_code 75 git cs commit shared p.json --expect $tip 2>err &&
-	echo STALE_TIP >expect &&
-	test_cmp expect err &&
-	test_must_fail git cs commit "bad..name" p.json 2>err &&
-	grep "invalid context branch" err
-'
-
-test_expect_success 'merge accepts a supplied result' '
-	git cs branch c $base &&
-	ctx c "[\"m1\",\"b1\"]" &&
-	payload "[\"a1\"]" result.json &&
-	git cs merge a refs/cs/heads/c --result result.json &&
-	test "$(active refs/cs/heads/a)" = "[\"a1\"]"
-'
-
-test_expect_success 'rebase replays each change onto the new base' '
+test_expect_success 'rebase replays messages onto the new base and keeps the old tip' '
 	git cs branch topic $base &&
-	git cs branch up $base &&
-	ctx topic "[\"m1\",\"m2\",\"a1\"]" &&
-	ctx topic "[\"m2\",\"a1\"]" &&
-	ctx up "[\"m1\",\"m2\",\"b1\"]" &&
-	git cs rebase topic refs/cs/heads/up &&
-	test "$(active refs/cs/heads/topic)" = "[\"m2\",\"a1\",\"b1\"]" &&
-	git merge-base --is-ancestor refs/cs/heads/up refs/cs/heads/topic
-'
-
-test_expect_success 'rebase refuses removals that no longer apply' '
-	ctx up "[\"m2\",\"b1\"]" &&
-	git cs reset topic refs/cs/recovery/topic &&
+	git cs commit topic -m t1 &&
+	git cs commit topic -m t2 &&
 	old=$(git rev-parse refs/cs/heads/topic) &&
-	test_must_fail git cs rebase topic refs/cs/heads/up &&
-	test "$(git rev-parse refs/cs/heads/topic)" = $old
+	git cs rebase topic b &&
+	git merge-base --is-ancestor refs/cs/heads/b refs/cs/heads/topic &&
+	test "$(git rev-parse refs/cs/recovery/topic)" = $old &&
+	git cs context topic | sed "s/^[0-9a-f]* message: //" >actual &&
+	printf "Investigate SQLite\nfrom b\nt1\nt2\n" >expect &&
+	test_cmp expect actual &&
+	test_must_fail git cs rebase a $base 2>err &&
+	test_grep "cannot replay merge checkpoints" err
 '
 
-test_expect_success 'rebase refuses merge checkpoints' '
-	test_must_fail git cs rebase a $base
-'
-
-test_expect_success 'cherry-pick and revert replay one change' '
+test_expect_success 'cherry-pick copies one message and revert retracts it' '
 	git cs branch pick $base &&
-	add=$(ctx b "[\"m1\",\"m2\",\"b1\",\"a1\"]") &&
-	git cs cherry-pick pick $add &&
-	test "$(active refs/cs/heads/pick)" = "[\"m1\",\"m2\",\"a1\"]" &&
-	git cs revert pick refs/cs/heads/pick &&
-	test "$(active refs/cs/heads/pick)" = "[\"m1\",\"m2\"]"
+	git cs cherry-pick pick topic &&
+	git cs context pick | sed "s/^[0-9a-f]* message: //" >actual &&
+	printf "Investigate SQLite\nt2\n" >expect &&
+	test_cmp expect actual &&
+	git cs revert pick pick &&
+	test "$(kind_of pick)" = retract &&
+	git cs context pick | sed "s/^[0-9a-f]* message: //" >actual &&
+	echo "Investigate SQLite" >expect &&
+	test_cmp expect actual
 '
 
-test_expect_success 'tags and labels name exact checkpoints' '
-	git cs tag v1 $base &&
-	test_must_fail git cs tag v1 $base &&
-	git cs label add ticket $base refs/cs/heads/a &&
-	git cs label resolve ticket >members &&
-	test_line_count = 2 members &&
-	git cs label remove ticket $base &&
-	git cs label resolve ticket >members &&
-	test_line_count = 1 members
+test_expect_success 'pin and unpin take context branch names' '
+	git cs pin retry &&
+	git rev-parse refs/cs/pins/$base &&
+	git cs unpin retry &&
+	test_must_fail git rev-parse -q --verify refs/cs/pins/$base
 '
 
-test_expect_success 'summary sources are pinned' '
-	printf "{\"schema\":\"cs/1\",\"active\":[\"s1\"],\"chunks\":[{\"id\":\"s1\",\"sources\":[\"%s\"]}]}" $base >summary.json &&
-	git cs branch sum $base &&
-	git cs commit sum summary.json &&
-	git rev-parse refs/cs/pins/$base
-'
-
-test_expect_success 'commit-code links and pins the context' '
-	git cs unpin $base &&
+test_expect_success 'init makes every code commit name its context' '
+	git cs init &&
+	test "$(git config commit.requireContext)" = true &&
 	echo change >file &&
 	git add file &&
-	git cs commit-code --context $base -- -m linked &&
-	test "$(git cs links --code HEAD)" = $base &&
-	test "$(git cs links --context $base)" = "$(git rev-parse HEAD)" &&
-	quoted=$(git commit-tree HEAD^{tree} -m quote -m "Context-Shadow: $base
-	inside a paragraph" -m end) &&
-	test -z "$(git cs links --context $base $quoted)" &&
-	git rev-parse refs/cs/pins/$base &&
-	test_must_fail git cs commit-code --context HEAD -- -m nope
-'
-
-test_expect_success 'commit-code keeps exactly one link' '
-	git cs commit-code --context refs/cs/heads/x -- --amend --no-edit &&
-	test "$(git cs links --code HEAD)" = "$(git rev-parse refs/cs/heads/x)" &&
-	git cs commit-code --context $base -- --amend --no-edit &&
-	test "$(git cs links --code HEAD)" = $base
-'
-
-test_expect_success 'the commit-msg hook requires exactly one link' '
-	git init hooked &&
-	git -C hooked cs install-hook &&
-	test_must_fail git -C hooked cs install-hook &&
-	echo "{\"schema\":\"cs/1\",\"active\":[],\"chunks\":[]}" >hooked/e.json &&
-	c=$(git -C hooked cs commit main e.json) &&
-	d=$(git -C hooked cs commit main e.json) &&
-	test_must_fail git -C hooked commit --allow-empty -m plain &&
-	git -C hooked cs commit-code --context $c -- --allow-empty -m linked &&
-	test_must_fail git -C hooked commit --allow-empty -m two \
-		--trailer "Context-Shadow: $c" --trailer "Context-Shadow: $d"
-'
-
-test_expect_success 'linked context survives branch deletion and gc' '
-	git update-ref -d refs/cs/heads/main &&
-	git gc --prune=now &&
-	git cs show $base
+	test_must_fail git commit -m unlinked &&
+	ctx=$(git rev-parse refs/cs/heads/main) &&
+	git cs commit-code --context main -- -m linked &&
+	test "$(git cs links --code HEAD)" = $ctx &&
+	git rev-parse refs/cs/pins/$ctx &&
+	git commit --amend -m "still linked" &&
+	test "$(git cs links --code HEAD)" = $ctx &&
+	test "$(git cs links --context main)" = "$(git rev-parse HEAD)"
 '
 
 test_expect_success 'fsck requires exactly one pinned link per code commit' '
 	git cs fsck code..HEAD &&
 	test_must_fail git cs fsck >out 2>&1 &&
-	grep "unlinked: $(git rev-parse code)" out &&
-	git commit --allow-empty -m two --trailer "Context-Shadow: $base" --trailer "Context-Shadow: $tip" &&
+	test_grep "unlinked: $(git rev-parse code)" out &&
+	git cat-file commit HEAD >raw &&
+	sed "/^context /p" raw >raw2 &&
+	two=$(git hash-object -t commit -w raw2) &&
+	test_must_fail git cs fsck code..$two >out 2>&1 &&
+	test_grep "several links: $two" out &&
+	git cs unpin main &&
 	test_must_fail git cs fsck code..HEAD >out 2>&1 &&
-	grep "several links" out &&
-	git reset --hard HEAD^ &&
-	git cs unpin $base &&
-	test_must_fail git cs fsck code..HEAD &&
-	git cs pin $base &&
+	test_grep "unpinned link" out &&
+	git cs pin main &&
 	git update-ref refs/cs/heads/bogus HEAD &&
-	test_must_fail git cs fsck code..HEAD &&
+	test_must_fail git cs fsck code..HEAD >out 2>&1 &&
+	test_grep "not a checkpoint: refs/cs/heads/bogus" out &&
 	git update-ref -d refs/cs/heads/bogus
+'
+
+test_expect_success 'linked context survives branch deletion and gc' '
+	ctx=$(git rev-parse refs/cs/heads/main) &&
+	git update-ref -d refs/cs/heads/main &&
+	git gc --prune=now &&
+	git cs show $ctx &&
+	git cs branch main $ctx
 '
 
 test_expect_success 'push and fetch carry context to a fresh receiver' '
@@ -384,14 +244,14 @@ test_expect_success 'push and fetch carry context to a fresh receiver' '
 	git clone hub.git rx &&
 	git -C rx cs fetch origin &&
 	git -C rx cs show "$(git -C rx cs links --code HEAD)" &&
-	git -C rx rev-parse refs/cs/remotes/origin/a refs/cs/tags/v1 &&
-	git -C rx cs label resolve ticket
+	git -C rx cs fsck HEAD^..HEAD &&
+	git -C rx rev-parse refs/cs/remotes/origin/a refs/cs/tags/v1
 '
 
 test_expect_success 'push is atomic across code and context' '
 	git push -f hub.git "$(git commit-tree HEAD^{tree} -m other)":refs/heads/master &&
 	before=$(git -C hub.git rev-parse refs/cs/heads/a) &&
-	ctx a "[\"m1\"]" &&
+	git cs commit a -m newer &&
 	test_must_fail git cs push hub.git HEAD:refs/heads/master &&
 	test "$(git -C hub.git rev-parse refs/cs/heads/a)" = $before
 '
@@ -401,6 +261,10 @@ test_expect_success 'bundle carries context offline' '
 	git init offline &&
 	git -C offline fetch ../cs.bundle "refs/cs/*:refs/cs/*" HEAD:refs/heads/in &&
 	git -C offline cs show "$(git -C offline cs links --code in)"
+'
+
+test_expect_success 'no temporary files are left behind' '
+	test_path_is_missing .git/cs-tmp.*
 '
 
 test_done

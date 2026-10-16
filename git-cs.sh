@@ -1,28 +1,39 @@
 #!/bin/sh
 #
 # git cs: version captured context in a history separate from code.
+#
+# A checkpoint is a commit whose tree holds a single typed message:
+#
+#	kind: <kind>
+#	code: <commit>		optional: the code state it was captured against
+#
+#	<body>
+#
+# Code commits name the checkpoint they were made from in their "context"
+# header (git commit --context), so every code commit leads to one point of
+# the context history, while a checkpoint may name at most one code commit.
 
 SUBDIRECTORY_OK=Yes
-USAGE='[--json] commit <branch> (<payload> | -m <message> [--kind <kind>]) [--expect <checkpoint>]
-   or: show <checkpoint> [--messages]
-   or: log <branch>
+USAGE='init
+   or: commit <branch> (-m <message> | -F <file>) [--kind <kind>] [--code <commit>] [--expect <checkpoint>]
+   or: show <checkpoint>
+   or: context <checkpoint>
+   or: log <checkpoint>
    or: diff <checkpoint> <checkpoint>
-   or: branch <name> <checkpoint> [--through <chunk>]
+   or: branch <name> <checkpoint>
    or: switch [-c] <workspace> <branch> [<checkpoint>]
    or: reset <branch> <checkpoint>
    or: reflog <branch>
    or: tag <name> <checkpoint>
    or: label (add | remove) <name> <checkpoint>...
    or: label resolve <name>
-   or: merge <branch> <checkpoint> [--result <payload>] [--no-ff] [--retry <n>]
-   or: merge-preview <checkpoint> <checkpoint>
+   or: merge <branch> <checkpoint> [-m <message>] [--no-ff] [--retry <n>]
    or: rebase <branch> <onto>
    or: cherry-pick <branch> <checkpoint>
    or: revert <branch> <checkpoint>
    or: pin <checkpoint>...
    or: unpin <checkpoint>...
    or: commit-code --context <checkpoint> -- <git-commit-options>
-   or: install-hook
    or: fsck [<code-revs>...]
    or: links (--code <commit> | --context <checkpoint> [<code-refs>...])
    or: push <remote> [<code-refspec>...]
@@ -40,13 +51,6 @@ stale () {
 	exit 75
 }
 
-# Print the full ID of checkpoint $1, or die. Context branch names win over code refs.
-rev () {
-	c=$(git rev-parse -q --verify "$(ref "$1" 2>/dev/null)^{commit}" || git rev-parse -q --verify "$1^{commit}") &&
-	git cat-file -e $c:context.json 2>/dev/null && echo $c ||
-	die "not a cs checkpoint: $1"
-}
-
 # A branch name, or @<workspace> for the branch that workspace selected.
 ref () {
 	case "$1" in
@@ -55,120 +59,115 @@ ref () {
 	esac
 }
 
-# Store $payload as a checkpoint on top of $tip (and $merge) without moving any ref.
+# Print the full ID of checkpoint $1, or die. Context branch names win over code refs.
+rev () {
+	c=$(git rev-parse -q --verify "$(ref "$1" 2>/dev/null)^{commit}" || git rev-parse -q --verify "$1^{commit}") &&
+	test "$(git ls-tree --name-only $c 2>/dev/null)" = message && echo $c ||
+	die "not a cs checkpoint: $1"
+}
+
+# Write the typed message: kind, optional code commit, optional retracted checkpoint, body.
+write_message () {
+	case "$1" in
+	""|*[!a-z0-9-]*) die "invalid kind: $1" ;;
+	esac
+	test -n "$4" || die "empty message"
+	{
+		echo "kind: $1"
+		test -z "$2" || echo "code: $2"
+		test -z "$3" || echo "retracts: $3"
+		echo
+		printf '%s\n' "$4"
+	} >"$tmp.msg"
+}
+
+# Store $tmp.msg as a checkpoint with the given parents and print its ID.
 checkpoint () {
-	jq -e '.schema == "cs/1" and (.active | length == (unique | length)) and
-		([.chunks[].id] | length == (unique | length) and
-			all(type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._-]*$"))) and
-		([.chunks[].id] as $ids | all(.active[]; IN($ids[]))) and
-		all(.chunks[].sources[]?; type == "string" and test("^([0-9a-f]{40}|[0-9a-f]{64})$"))' "$payload" >/dev/null ||
-	die "invalid cs/1 payload: $payload"
-	entries=$(jq -c '.chunks[]' "$payload" | while read -r chunk
+	parents=
+	for p
 	do
-		id=$(printf '%s\n' "$chunk" | jq -r .id)
-		blob=$(printf '%s\n' "$chunk" | jq -cS . | git hash-object -w --stdin)
-		for p in $tip $merge
-		do
-			old=$(git rev-parse -q --verify $p:chunks/$id.json)
-			test "${old:-$blob}" = $blob || die "identity conflict: $id"
-		done
-		printf '100644 blob %s\t%s.json\n' "$blob" "$id"
-	done) &&
-	tree=$(printf %s "$entries" | git mktree) &&
-	manifest=$(jq -cS '{schema, active}' "$payload" | git hash-object -w --stdin) &&
-	tree=$(printf '100644 blob %s\tcontext.json\n040000 tree %s\tchunks\n' "$manifest" "$tree" | git mktree) &&
-	commit=$(echo "${msg:-cs checkpoint}" | git commit-tree $tree ${tip:+-p $tip} ${merge:+-p $merge}) || exit
-	cmd_pin $(jq -r '.chunks[].sources[]?' "$payload") || exit
-	echo $commit
+		parents="$parents -p $p"
+	done
+	subject=$(sed -n '/^$/{n;p;q;}' "$tmp.msg")
+	tree=$(printf '100644 blob %s\tmessage\n' "$(git hash-object -w "$tmp.msg")" | git mktree) &&
+	git commit-tree $tree $parents -m "$(sed -n '1s/^kind: //p' "$tmp.msg"): $subject"
+}
+
+body () {
+	git cat-file blob "$1:message" | sed '1,/^$/d'
+}
+
+cmd_init () {
+	git config commit.requireContext true
 }
 
 cmd_commit () {
-	branch=$1 payload= expect= message= kind=message
+	branch=$1 message= kind=message code= expect=
 	shift
 	while test $# -gt 0
 	do
 		case "$1" in
 		-m) message=$2; shift ;;
+		-F) message=$(cat "$2") || exit; shift ;;
 		--kind) kind=$2; shift ;;
+		--code) code=$2; shift ;;
 		--expect) expect=$2; shift ;;
-		-*) usage ;;
-		*) payload=$1 ;;
+		*) usage ;;
 		esac
 		shift
 	done
-	test -n "$payload$message" || usage
-	test -z "$payload" || test -z "$message" || usage
 	git check-ref-format "$(ref "$branch" 2>/dev/null)" || die "invalid context branch: $branch"
+	if test -n "$code"
+	then
+		code=$(git rev-parse -q --verify "$code^{commit}") || die "not a commit: $code"
+	fi
 	tip=$(git rev-parse -q --verify "$(ref "$branch")")
-	test -z "$message" || {
-		# Append the message as a new chunk on top of the current tip.
-		id=m$(printf '%s %s %s %s' "$tip" $$ "$(date +%s)" "$message" | git hash-object --stdin | cut -c1-15)
-		payload="$tmp.message" msg=${msg:-$message}
-		if test -n "${expect:-$tip}"
-		then
-			cmd_show ${expect:-$tip}
-		else
-			echo '{"schema":"cs/1","active":[],"chunks":[]}'
-		fi |
-		jq --arg id $id --arg kind "$kind" --arg body "$message" \
-			'.active += [$id] | .chunks += [{id: $id, kind: $kind, body: $body}]' >"$payload" || exit
-	}
-	commit=$(checkpoint) || exit
+	write_message "$kind" "$code" "" "$message"
+	commit=$(checkpoint $tip) || exit
 	git update-ref --create-reflog "$(ref "$branch")" $commit "${expect:-$tip}" 2>/dev/null || stale
 	echo $commit
 }
 
 cmd_show () {
-	test "$2" != --messages || {
-		cmd_show "$1" | jq -r '(.chunks | map({key: .id, value: .}) | from_entries) as $c |
-			.active[] | "\(.) \($c[.].kind // "chunk"): \($c[.].body // "")"'
-		return
-	}
-	rev=$(rev "$1") || exit
-	{
-		git cat-file blob $rev:context.json &&
-		git ls-tree --name-only $rev chunks/ |
-		while read -r path
-		do
-			git cat-file blob $rev:$path
-		done
-	} | jq -cs '.[0] + {chunks: .[1:]}'
+	c=$(rev "$1") || exit
+	git cat-file blob $c:message
 }
 
-# One line per checkpoint, then the chunks it changed against its first parent.
-cmd_log () {
-	git log --format='%H %P' "$(ref "$1")" |
-	while read -r c p more
+# Every message leading to the checkpoint, oldest first, without merges and retracted ones.
+cmd_context () {
+	c=$(rev "$1") || exit
+	retracted=$(git rev-list $c | while read -r r
+		do
+			git cat-file blob $r:message | sed -n '/^$/q; s/^retracts: //p'
+		done | tr '\n' ' ')
+	git rev-list --reverse --topo-order $c |
+	while read -r r
 	do
-		git log -1 --date=short --format="%h %ad %s${more:+ (merge)}" $c
-		if test -n "$p"
-		then
-			cmd_diff $p $c
-		else
-			cmd_show $c | jq -r '.active[] | "+ " + .'
-		fi | sed 's/^/    /'
+		kind=$(git cat-file blob $r:message | sed -n '1s/^kind: //p')
+		case "$kind" in
+		merge|retract) continue ;;
+		esac
+		case " $retracted " in
+		*" $r "*) continue ;;
+		esac
+		printf '%s %s: %s\n' $(git rev-parse --short $r) "$kind" "$(body $r)"
 	done
 }
 
+cmd_log () {
+	c=$(rev "$1") || exit
+	git log --date=short --format='%h %ad %s' $c
+}
+
 cmd_diff () {
-	cmd_show "$1" >"$tmp.a" && cmd_show "$2" >"$tmp.b" &&
-	jq -rn --slurpfile a "$tmp.a" --slurpfile b "$tmp.b" '$a[0] as $a | $b[0] as $b |
-		($a.active - $b.active | map("- " + .)[]),
-		($b.active - $a.active | map("+ " + .)[]),
-		if ($a.active - ($a.active - $b.active)) != ($b.active - ($b.active - $a.active))
-		then "~ reordered" else empty end'
+	a=$(rev "$1") && b=$(rev "$2") || exit
+	git log --format='- %h %s' $b..$a
+	git log --format='+ %h %s' $a..$b
 }
 
 cmd_branch () {
 	start=$(rev "$2") || exit
-	test "$3" != --through || {
-		tip=$start merge= msg="cs derived view: prefix through $4" payload="$tmp.derived"
-		cmd_show $tip | jq -c --arg m "$4" '
-			(.active | indices($m)[0] // error("not active: \($m)")) as $i |
-			.active |= .[:$i + 1] | .active as $a | .chunks |= map(select(.id | IN($a[])))' >"$payload" &&
-		start=$(checkpoint) || exit
-	}
-	git update-ref --create-reflog "$(ref "$1")" "$start" ""
+	git update-ref --create-reflog "$(ref "$1")" $start ""
 }
 
 cmd_switch () {
@@ -208,35 +207,9 @@ cmd_label () {
 	test "$op" != resolve || git for-each-ref --format='%(objectname)' refs/cs/labels/$name/
 }
 
-# Ordered union: keep each side's order, break ties by chunk ID.
-union='def union($a; $b):
-[$a.active, $b.active | [.[:-1], .[1:]] | transpose[]] as $edges |
-{out: [], left: ($a.active + $b.active | unique)} |
-until(.left == [];
-	.left as $left |
-	(first($left[] | select(. as $n | all($edges[];
-		.[1] != $n or (.[0] as $p | all($left[]; . != $p))))) // error("order conflict")) as $n |
-	.out += [$n] | .left -= [$n]) |
-.out as $active |
-{schema: "cs/1", active: $active, chunks: [$a.chunks + $b.chunks | group_by(.id)[] |
-	if unique | length > 1 then error("identity conflict: \(.[0].id)") else .[0] end |
-	select(.id | IN($active[]))]};
-'
-
-# Apply the change $from -> $to on top of $cur; removals must still be present.
-replay='$cur[0] as $cur | $from[0] as $from | $to[0] as $to |
-($from.active - $to.active) as $rm | ($to.active - $from.active) as $add |
-if all($rm[]; IN($cur.active[])) then . else error("replay conflict: removed chunk missing") end |
-union($cur; $to | .active |= map(select(IN($cur.active[], $add[])))) | .active -= $rm |
-.chunks |= map(select(.id | IN($rm[]) | not))
-'
-
-# Print a new checkpoint on $1 that repeats the change from $2 to $3.
+# Print a copy of checkpoint $2 on top of $1; a message never conflicts.
 replay () {
-	tip=$1 merge= payload="$tmp.replay" msg="cs replay $2..$3"
-	cmd_show $1 >"$tmp.cur" && cmd_show $2 >"$tmp.from" && cmd_show $3 >"$tmp.to" &&
-	jq -n --slurpfile cur "$tmp.cur" --slurpfile from "$tmp.from" --slurpfile to "$tmp.to" \
-		"$union $replay" >"$payload" && checkpoint
+	git log -1 --format=%B $2 | git commit-tree $2^{tree} -p $1
 }
 
 cmd_rebase () {
@@ -245,39 +218,37 @@ cmd_rebase () {
 	test -z "$(git rev-list --min-parents=2 $new..$old)" || die "cannot replay merge checkpoints"
 	for c in $(git rev-list --reverse $new..$old)
 	do
-		new=$(replay $new $c^ $c) || exit
+		new=$(replay $new $c) || exit
 	done
 	git update-ref --create-reflog refs/cs/recovery/"$1" $old &&
-	git update-ref --create-reflog "$(ref "$1")" $new $old && echo $new
-}
-
-# Move $1 to a replay of $2 -> $3 on top of it.
-apply () {
-	old=$(git rev-parse --verify "$(ref "$1")") &&
-	new=$(replay $old "$2" "$3") &&
-	git update-ref --create-reflog "$(ref "$1")" $new $old && echo $new
+	git update-ref --create-reflog "$(ref "$1")" $new $old 2>/dev/null || stale
+	echo $new
 }
 
 cmd_cherry_pick () {
-	apply "$1" "$2^" "$2"
+	old=$(git rev-parse --verify "$(ref "$1")") &&
+	c=$(rev "$2") &&
+	new=$(replay $old $c) || exit
+	git update-ref --create-reflog "$(ref "$1")" $new $old 2>/dev/null || stale
+	echo $new
 }
 
 cmd_revert () {
-	apply "$1" "$2" "$2^"
-}
-
-cmd_merge_preview () {
-	cmd_show "$1" >"$tmp.a" && cmd_show "$2" >"$tmp.b" &&
-	jq -cn --slurpfile a "$tmp.a" --slurpfile b "$tmp.b" "$union union(\$a[0]; \$b[0])"
+	old=$(git rev-parse --verify "$(ref "$1")") &&
+	c=$(rev "$2") || exit
+	write_message retract "" $c "Retract: $(git log -1 --format=%s $c)"
+	new=$(checkpoint $old) || exit
+	git update-ref --create-reflog "$(ref "$1")" $new $old 2>/dev/null || stale
+	echo $new
 }
 
 cmd_merge () {
-	branch=$1 name=$2 result= noff= retry=0
+	branch=$1 name=$2 message= noff= retry=0
 	shift 2
 	while test $# -gt 0
 	do
 		case "$1" in
-		--result) result=$2; shift ;;
+		-m) message=$2; shift ;;
 		--no-ff) noff=1 ;;
 		--retry) retry=$2; shift ;;
 		*) usage ;;
@@ -304,25 +275,17 @@ merge_once () {
 		echo $ours
 		return
 	}
-	if git merge-base --is-ancestor $ours $theirs
-	then
-		test -n "$noff$result" || {
-			git update-ref --create-reflog "$(ref "$branch")" $theirs $ours 2>/dev/null || stale
-			echo >&2 "Fast-forward"
-			echo $theirs
-			return
-		}
-		test -n "$result" || {
-			result="$tmp.merge"
-			cmd_show $theirs >"$result" || exit
-		}
-	fi
-	test -n "$result" || {
-		result="$tmp.merge"
-		cmd_merge_preview $ours $theirs >"$result" || exit
+	git merge-base --is-ancestor $ours $theirs && test -z "$noff" && {
+		git update-ref --create-reflog "$(ref "$branch")" $theirs $ours 2>/dev/null || stale
+		echo >&2 "Fast-forward"
+		echo $theirs
+		return
 	}
-	merge=$theirs msg="cs merge $name" cmd_commit "$branch" "$result" --expect $ours &&
+	write_message merge "" "" "${message:-Merge $name}"
+	new=$(checkpoint $ours $theirs) || exit
+	git update-ref --create-reflog "$(ref "$branch")" $new $ours 2>/dev/null || stale
 	echo >&2 "Merge checkpoint"
+	echo $new
 }
 
 cmd_pin () {
@@ -346,34 +309,37 @@ cmd_commit_code () {
 	shift 2
 	test "$1" = -- && shift
 	cmd_pin $ctx &&
-	git -c trailer.Context-Shadow.ifExists=replace commit --trailer "Context-Shadow: $ctx" "$@"
+	git commit --context $ctx "$@"
 }
 
-cmd_install_hook () {
-	hook=$(git rev-parse --git-path hooks/commit-msg)
-	test ! -e "$hook" || die "hook already exists: $hook"
-	mkdir -p "${hook%/*}" &&
-	cat >"$hook" <<-\EOF &&
-	#!/bin/sh
-	test "$(git interpret-trailers --parse "$1" | grep -ic "^Context-Shadow: ")" = 1 ||
-	{ echo >&2 "commit must link exactly one cs checkpoint, use git cs commit-code"; exit 1; }
-	EOF
-	chmod +x "$hook"
+# Code commits with the number of context headers they carry and the last one.
+code_links () {
+	git log --pretty=raw "$@" |
+	awk '/^commit / { if (c) print c, n, v; c = $2; n = 0; v = "" }
+		/^context / { n++; v = $2 }
+		END { if (c) print c, n, v }'
 }
 
 cmd_fsck () {
 	bad=$(git for-each-ref --format='%(objectname) %(refname)' refs/cs/ |
 	while read -r c name
 	do
-		git cat-file -e $c:context.json 2>/dev/null || echo "not a checkpoint: $name"
+		if test "$(git ls-tree --name-only $c 2>/dev/null)" != message
+		then
+			echo "not a checkpoint: $name"
+			continue
+		fi
+		code=$(git cat-file blob $c:message | sed -n '/^$/q; s/^code: //p')
+		test -z "$code" || git cat-file -e "$code^{commit}" 2>/dev/null ||
+		echo "missing code commit: $name -> $code"
 	done
-	git log --format='%H %(trailers:key=Context-Shadow,valueonly,separator=%x20)' "${@:---branches}" |
-	while read -r code ctx
+	code_links "${@:---branches}" |
+	while read -r code n ctx
 	do
-		case "$ctx" in
-		("") echo "unlinked: $code" ;;
-		(*" "*) echo "several links: $code" ;;
-		(*) git rev-parse -q --verify refs/cs/pins/$ctx >/dev/null || echo "unpinned link: $code -> $ctx" ;;
+		case "$n" in
+		(0) echo "unlinked: $code" ;;
+		(1) git rev-parse -q --verify refs/cs/pins/$ctx >/dev/null || echo "unpinned link: $code -> $ctx" ;;
+		(*) echo "several links: $code" ;;
 		esac
 	done)
 	test -z "$bad" || die "$bad"
@@ -382,12 +348,11 @@ cmd_fsck () {
 cmd_links () {
 	case "$1" in
 	--code)
-		git log -1 --format='%(trailers:key=Context-Shadow,valueonly)' "$2" ;;
+		git cat-file commit "${2:-HEAD}" | sed -n '/^$/q; s/^context //p' ;;
 	--context)
 		ctx=$(rev "$2") || exit
 		shift 2
-		git log --format='%H %(trailers:key=Context-Shadow,valueonly,separator=%x20)' "${@:---branches}" |
-		awk -v ctx=$ctx '{ for (i = 2; i <= NF; i++) if ($i == ctx) print $1 }' ;;
+		code_links "${@:---branches}" | awk -v ctx=$ctx '$2 == 1 && $3 == ctx { print $1 }' ;;
 	*)
 		usage ;;
 	esac
@@ -412,22 +377,12 @@ cmd_bundle () {
 	} | git bundle create "$file" --stdin
 }
 
-json=
-test "$1" != --json || { json=1; shift; }
 cmd=$1
 shift
 case "$cmd" in
-commit|show|log|diff|branch|switch|reset|reflog|tag|label|merge|merge-preview|rebase|\
-cherry-pick|revert|pin|unpin|commit-code|install-hook|fsck|links|push|fetch|bundle)
-	;;
+init|commit|show|context|log|diff|branch|switch|reset|reflog|tag|label|merge|rebase|\
+cherry-pick|revert|pin|unpin|commit-code|fsck|links|push|fetch|bundle)
+	cmd_$(echo "$cmd" | tr - _) "$@" ;;
 *)
 	usage ;;
 esac
-fn=cmd_$(echo "$cmd" | tr - _)
-test -n "$json" || { $fn "$@"; exit; }
-out=$($fn "$@" 2>"$tmp.err")
-status=$?
-jq -n --arg out "$out" --rawfile err "$tmp.err" --argjson status $status \
-	'{ok: ($status == 0), output: $out} +
-	if $status == 0 then {note: ($err | rtrimstr("\n"))} else {error: ($err | rtrimstr("\n"))} end'
-exit $status

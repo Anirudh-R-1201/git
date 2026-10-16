@@ -8,26 +8,26 @@ git-cs - Version captured context in a history separate from code
 SYNOPSIS
 --------
 [synopsis]
-git cs commit <branch> (<payload> | -m <message> [--kind <kind>]) [--expect <checkpoint>]
-git cs show <checkpoint> [--messages]
-git cs log <branch>
+git cs init
+git cs commit <branch> (-m <message> | -F <file>) [--kind <kind>] [--code <commit>] [--expect <checkpoint>]
+git cs show <checkpoint>
+git cs context <checkpoint>
+git cs log <checkpoint>
 git cs diff <checkpoint> <checkpoint>
-git cs branch <name> <checkpoint> [--through <chunk>]
+git cs branch <name> <checkpoint>
 git cs switch [-c] <workspace> <branch> [<checkpoint>]
 git cs reset <branch> <checkpoint>
 git cs reflog <branch>
 git cs tag <name> <checkpoint>
 git cs label (add | remove) <name> <checkpoint>...
 git cs label resolve <name>
-git cs merge <branch> <checkpoint> [--result <payload>] [--no-ff] [--retry <n>]
-git cs merge-preview <checkpoint> <checkpoint>
+git cs merge <branch> <checkpoint> [-m <message>] [--no-ff] [--retry <n>]
 git cs rebase <branch> <onto>
 git cs cherry-pick <branch> <checkpoint>
 git cs revert <branch> <checkpoint>
 git cs pin <checkpoint>...
 git cs unpin <checkpoint>...
 git cs commit-code --context <checkpoint> -- <git-commit-options>
-git cs install-hook
 git cs fsck [<code-revs>...]
 git cs links (--code <commit> | --context <checkpoint> [<code-refs>...])
 git cs push <remote> [<code-refspec>...]
@@ -36,95 +36,78 @@ git cs bundle <file> [<code-refs>...]
 
 DESCRIPTION
 -----------
-Checkpoint, branch, merge and replay captured context, such as the
-messages and tool exchanges of a coding agent, independently of the
-code. Context lives in its own commit graph under `refs/cs/` and no
-`git cs` command moves a code ref or touches the working tree, except
-`commit-code`, which creates an ordinary code commit.
+Record captured context, such as the messages and learnings of a coding
+agent, in a commit history of its own under `refs/cs/`, and link code
+commits to it. The context history branches and merges independently of
+the code; no `git cs` command moves a code ref or touches the working tree,
+except `commit-code`, which creates an ordinary code commit.
 
-A checkpoint is an ordinary commit whose tree holds `context.json`,
-the ordered list of active chunk IDs, and `chunks/<id>.json`, one file
-per active chunk. Each checkpoint is a complete state: it never needs
-its ancestors to resolve its active view.
-
-The caller decides what to capture and when. `git cs` stores and
-transforms the supplied data; it does not interpret chunk contents.
-
-`git cs` requires `jq`.
-
-OPTIONS
--------
-`--json`::
-	Given before the command, print one JSON object
-	`{"ok": ..., "output": ...}` holding the command's output, plus
-	`"note"` with its informational messages on success or `"error"`
-	on failure, for callers that parse results. The exit
-	status is unchanged.
-
-PAYLOADS
---------
-Commands that read or print context use a self-contained payload:
+A checkpoint is a commit whose tree holds a single file, `message`:
 
 ------------
-{ "schema": "cs/1",
-  "active": ["m1", "m2"],
-  "chunks": [ { "id": "m1", "kind": "message", "body": "..." },
-	      { "id": "m2", "kind": "summary", "body": "...",
-		"sources": ["<checkpoint>"] } ] }
+kind: learning
+code: <commit>
+
+Use WAL mode; readers must not block writers.
 ------------
 
-`active` lists unique chunk IDs in presentation order, and each must
-have a chunk. Chunk IDs are unique within a payload and use only
-letters, digits, `.`, `_` and `-`, starting with a letter or digit. A chunk ID always names the same bytes: committing a
-chunk whose ID already exists on the branch tip with different
-contents fails. To edit a chunk, give it a new ID.
+`kind` names what the message is; `code` optionally names the code commit
+the message was captured against. The body follows the blank line. The
+context at a checkpoint is the checkpoint together with its ancestors.
 
-A chunk with `sources` is a summary; the full checkpoint IDs it lists
-are pinned so they stay recoverable after the summary replaces them.
+The two histories are linked in one direction each:
+
+* A code commit names the checkpoint it was made from in a `context`
+  header of the commit object (see `--context` in linkgit:git-commit[1]).
+  It names at most one, and `git cs init` makes naming one mandatory.
+* A checkpoint may name one code commit in its `code` field. It cannot
+  name a commit that links back to it, as each would need the other's
+  ID first; it names the code it was captured against instead.
+
+ARGUMENTS
+---------
+Arguments named _<checkpoint>_ may be a context branch name,
+`@<workspace>`, or any revision that resolves to a checkpoint. A context
+branch name wins over a code ref of the same name; code commits are
+refused.
 
 COMMANDS
 --------
-Arguments named _<checkpoint>_ may be a context branch name,
-`@<workspace>`, or any revision that resolves to a context checkpoint.
-A context branch name wins over a code ref of the same name; code
-commits are refused.
+`init`::
+	Set `commit.requireContext` so that `git commit` refuses code
+	commits that do not name their context.
 
-`commit <branch> (<payload> | -m <message> [--kind <kind>]) [--expect <checkpoint>]`::
-	Store _<payload>_ as a new checkpoint on top of _<branch>_ and
-	print its ID. With `-m`, no payload is needed: _<message>_ is
-	appended as a new chunk of _<kind>_ (default `message`) with a
-	generated ID, and its first line becomes the checkpoint subject. With `--expect`, refuse with exactly `STALE_TIP`
-	on standard error (exit status 75) unless
-	the branch is still at _<checkpoint>_, so concurrent writers
-	cannot overwrite each other.
+`commit <branch> (-m <message> | -F <file>) [--kind <kind>] [--code <commit>] [--expect <checkpoint>]`::
+	Record a message as a new checkpoint on top of _<branch>_,
+	creating the branch if needed, and print its ID. _<kind>_
+	(default `message`) uses lowercase letters, digits and `-`.
+	The checkpoint's subject is `<kind>: <first line>`. With
+	`--expect`, refuse with exactly `STALE_TIP` on standard error
+	(exit status 75) unless the branch is still at _<checkpoint>_.
 
-`show <checkpoint> [--messages]`::
-	Print the payload stored in _<checkpoint>_. The output can be
-	given back to `commit` unchanged. With `--messages`, print the
-	active chunks as plain text instead, one `<id> <kind>: <body>`
-	entry each, in order.
+`show <checkpoint>`::
+	Print the typed message stored in _<checkpoint>_.
 
-`log <branch>`::
-	List the checkpoints on _<branch>_, newest first, each with its
-	date, subject and a `(merge)` marker, followed by the chunks it
-	dropped, added or reordered against its first parent.
+`context <checkpoint>`::
+	Print every message leading to _<checkpoint>_, oldest first, as
+	`<id> <kind>: <body>`. Merge checkpoints, retractions and the
+	messages they retract are left out.
+
+`log <checkpoint>`::
+	List the checkpoints leading to _<checkpoint>_, newest first, with
+	their dates and subjects.
 
 `diff <checkpoint> <checkpoint>`::
-	Show chunks dropped (`-`) and added (`+`) between two active
-	views, and `~ reordered` when shared chunks changed order.
+	List the checkpoints only the first side has (`-`) and only the
+	second side has (`+`).
 
-`branch <name> <checkpoint> [--through <chunk>]`::
-	Create context branch _<name>_ at _<checkpoint>_. With
-	`--through`, start it at a new derived checkpoint whose active
-	view is the prefix ending at _<chunk>_; it is marked as a
-	derived view because it was never a recorded state.
+`branch <name> <checkpoint>`::
+	Create context branch _<name>_ at _<checkpoint>_.
 
 `switch [-c] <workspace> <branch> [<checkpoint>]`::
 	Select _<branch>_ for _<workspace>_, creating it at
 	_<checkpoint>_ first with `-c`. Any _<branch>_ argument may then
-	be written `@<workspace>`, so concurrent callers each follow
-	their own branch. There is no repository-wide context HEAD and
-	workspaces are never transferred.
+	be written `@<workspace>`. Workspaces are never transferred.
 
 `reset <branch> <checkpoint>`::
 	Move _<branch>_ to _<checkpoint>_, saving the old tip in
@@ -140,36 +123,29 @@ commits are refused.
 `label remove <name> <checkpoint>...`::
 `label resolve <name>`::
 	Group exact checkpoints, such as everything for one ticket.
-	Labels never rewrite checkpoints or include their ancestors.
 
-`merge <branch> <checkpoint> [--result <payload>] [--no-ff] [--retry <n>]`::
-	Merge _<checkpoint>_ into _<branch>_ and print the resulting
-	tip. The standard error says whether the merge was a
-	`Fast-forward`, created a `Merge checkpoint`, or was
-	`Already up to date`. A descendant is
-	fast-forwarded unless `--no-ff` is given, which records a
-	merge checkpoint holding the incoming view. Divergent
-	histories are merged by ordered union. With `--result`, a merge
-	checkpoint holding _<payload>_ is always recorded. With
-	`--retry`, a merge that loses a race to another writer is
-	recomputed against the new tip up to _<n>_ times, after a
-	randomized, growing delay.
-
-`merge-preview <checkpoint> <checkpoint>`::
-	Print the ordered union of two checkpoints without moving any
-	branch. The output is a valid `--result` payload.
+`merge <branch> <checkpoint> [-m <message>] [--no-ff] [--retry <n>]`::
+	Merge _<checkpoint>_ into _<branch>_ and print the resulting tip.
+	A descendant is fast-forwarded unless `--no-ff` is given;
+	otherwise a checkpoint of kind `merge` with both tips as parents
+	is recorded, holding _<message>_ if given. Merges never conflict,
+	because each checkpoint holds its own message. Standard error
+	says `Fast-forward`, `Merge checkpoint` or `Already up to date`.
+	With `--retry`, a merge that loses a race to another writer is
+	retried up to _<n>_ times after a randomized, growing delay.
 
 `rebase <branch> <onto>`::
-	Replay each checkpoint of _<branch>_ not in _<onto>_ on top of
-	it and save the old tip as for `reset`. Merge checkpoints are
-	refused.
+	Copy each checkpoint of _<branch>_ that _<onto>_ lacks on top of
+	it, keeping each message, and save the old tip as for `reset`.
+	Merge checkpoints are refused.
 
 `cherry-pick <branch> <checkpoint>`::
-	Replay the change _<checkpoint>_ made onto _<branch>_.
+	Copy the message of _<checkpoint>_ onto _<branch>_.
 
 `revert <branch> <checkpoint>`::
-	Replay the inverse of that change onto _<branch>_. This
-	restores context only; it does not undo tool effects.
+	Record a `retract` checkpoint naming _<checkpoint>_ in a
+	`retracts` field, which hides it from `context`. This restores
+	context only; it does not undo tool effects.
 
 `pin <checkpoint>...`::
 `unpin <checkpoint>...`::
@@ -177,29 +153,21 @@ commits are refused.
 	collection never removes them, or release them.
 
 `commit-code --context <checkpoint> -- <git-commit-options>`::
-	Pin _<checkpoint>_ and run linkgit:git-commit[1] with a
-	`Context-Shadow: <checkpoint>` trailer, linking the new code
-	commit to the exact context it came from. An existing trailer,
-	for example when amending, is replaced so a code commit always
-	links exactly one checkpoint.
-
-`install-hook`::
-	Install a `commit-msg` hook that rejects any code commit without
-	exactly one `Context-Shadow` trailer, so ordinary `git commit`
-	cannot create unlinked commits. An existing hook is left alone.
+	Pin _<checkpoint>_ and run `git commit --context <checkpoint>`.
 
 `fsck [<code-revs>...]`::
-	Check that every ref under `refs/cs/` is a checkpoint and that
-	every code commit selected by _<code-revs>_ (default: all
-	branches) has exactly one `Context-Shadow` link, to a pinned
-	checkpoint. Pass a range such as `origin/master..` to skip
-	history written before context was tracked.
+	Check that every ref under `refs/cs/` is a checkpoint whose `code`
+	field, if any, names an existing commit, and that every code
+	commit selected by _<code-revs>_ (default: all branches) names
+	exactly one pinned checkpoint. Pass a range such as
+	`origin/master..` to skip history written before context was
+	tracked.
 
 `links --code <commit>`::
 `links --context <checkpoint> [<code-refs>...]`::
-	Print the checkpoint linked from _<commit>_, or the code
-	commits reachable from _<code-refs>_ (default: all branches)
-	that link to _<checkpoint>_.
+	Print the checkpoint named by _<commit>_, or the code commits
+	reachable from _<code-refs>_ (default: all branches) that name
+	_<checkpoint>_.
 
 `push <remote> [<code-refspec>...]`::
 	Push context branches, pins, tags and labels, together with any
@@ -214,25 +182,15 @@ commits are refused.
 	Write context refs and _<code-refs>_ to a bundle. Receive it
 	with `git fetch <file> 'refs/cs/*:refs/cs/*'`.
 
-MERGING
--------
-Ordered union combines both active lists, keeping a shared ID once.
-Each side's order is kept; chunks that are not ordered by either side
-are sorted by ID. A chunk active on either side stays active. It
-fails, leaving the branch unchanged, when a shared ID has different
-contents or the two sides order the same chunks differently.
-
-Replay (`rebase`, `cherry-pick`, `revert`) applies a checkpoint's
-additions by the same rules and requires every chunk it removes to
-still be active on the target.
-
 EXAMPLES
 --------
 ------------
-$ git cs commit agent session.json
-$ git cs branch retry refs/cs/heads/agent --through m7
-$ git cs merge agent refs/cs/heads/retry
-$ git cs commit-code --context refs/cs/heads/agent -- -m "Fix parser"
+$ git cs init
+$ git cs commit agent -m "Investigate SQLite" --code HEAD
+$ git cs commit agent -m "Use WAL mode" --kind learning
+$ git cs merge main agent --retry 10
+$ git cs commit-code --context agent -- -m "Enable WAL"
+$ git cs context agent
 $ git cs push origin HEAD:refs/heads/main
 ------------
 

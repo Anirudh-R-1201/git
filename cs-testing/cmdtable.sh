@@ -32,11 +32,11 @@ link () { git cat-file commit "$1" | sed -n '/^$/q; s/^context //p'; }
 row "commit -m" "git cs commit main -m 'Investigate SQLite'" "tree=message code_head_moved=no worktree_clean=yes" \
 	'BASE=$(git cs commit main -m "Investigate SQLite"); echo "tree=$(git ls-tree --name-only $BASE) code_head_moved=$([ $(git rev-parse HEAD) = $H ] && echo no || echo yes) worktree_clean=$([ -z "$(git status --porcelain)" ] && echo yes || echo no)"'
 row "show" "git cs show main" "kind: message  Investigate SQLite" \
-	'git cs show main'
+	'git cs show main | sed "/^id: /d"'
 row "commit --kind --code" "git cs commit main -m 'Use WAL mode' --kind learning --code HEAD" "kind=learning code=HEAD subject=learning: Use WAL mode" \
 	'c=$(git cs commit main -m "Use WAL mode" --kind learning --code HEAD); echo "kind=$(kind $c) code=$([ "$(git cs show $c | sed -n "s/^code: //p")" = $H ] && echo HEAD) subject=$(git log -1 --format=%s $c)"'
 row "commit -F (escapes)" "git cs commit esc -F msg  (body with \\n and \\\\)" "bytes_equal=yes" \
-	'printf "line one\nback\\\\slash \\\\n literal\n" >$P/msg; e=$(git cs commit esc -F $P/msg); echo "bytes_equal=$([ "$(git cs show $e | sed 1,2d)" = "$(cat $P/msg)" ] && echo yes || echo no)"'
+	'printf "line one\nback\\\\slash \\\\n literal\n" >$P/msg; e=$(git cs commit esc -F $P/msg); echo "bytes_equal=$([ "$(git cs show $e | sed "1,/^\$/d")" = "$(cat $P/msg)" ] && echo yes || echo no)"'
 T2=$(tip main)
 row "commit --expect (stale)" "git cs commit main -m late --expect <old tip>" "exit=75 stderr=STALE_TIP tip_unchanged=yes" \
 	'git cs commit main -m newer --expect $T2 >/dev/null; T3=$(tip main); git cs commit main -m late --expect $T2 >/dev/null 2>$E; echo "exit=$? stderr=$(cat $E) tip_unchanged=$([ $(tip main) = $T3 ] && echo yes)"'
@@ -74,7 +74,7 @@ row "merge (checkpoint)" "git cs merge agent-a agent-b" "stderr=Merge checkpoint
 	'm=$(git cs merge agent-a agent-b 2>$E); echo "stderr=$(cat $E) kind=$(kind $m) parents=$(parents $m) context=$(git cs context agent-a | sed -E "s/^[0-9a-f]+ //" | sort | paste -sd"|" -)"'
 git cs branch noff $BASE
 row "merge --no-ff -m" "git cs merge noff agent-b --no-ff -m 'take b'" "parents=2 body=take b" \
-	'm=$(git cs merge noff agent-b --no-ff -m "take b" 2>/dev/null); echo "parents=$(parents $m) body=$(git cs show $m | sed 1,2d)"'
+	'm=$(git cs merge noff agent-b --no-ff -m "take b" 2>/dev/null); echo "parents=$(parents $m) body=$(git cs show $m | sed "1,/^\$/d")"'
 for mode in 0 20; do
 	git cs branch s$mode $BASE
 	for i in 1 2 3 4 5 6 7 8; do git cs branch q$mode-$i $BASE; git cs commit q$mode-$i -m "q$mode-$i" >/dev/null; done

@@ -5,7 +5,9 @@
 # A checkpoint is a commit whose tree holds a single typed message:
 #
 #	kind: <kind>
+#	id: <id>		random, kept by every copy of the message
 #	code: <commit>		optional: the code state it was captured against
+#	retracts: <id>		retractions only: the message they hide
 #
 #	<body>
 #
@@ -59,6 +61,7 @@ ref () {
 	esac
 }
 
+# Succeed if $1 is a commit whose tree holds only the regular file "message".
 is_checkpoint () {
 	git ls-tree "$1" 2>/dev/null |
 	awk -F '\t' 'NR == 1 && $2 == "message" &&
@@ -73,13 +76,28 @@ rev () {
 	die "not a cs checkpoint: $1"
 }
 
+# Print header field $2 of checkpoint $1.
+field () {
+	git cat-file blob "$1:message" | sed -n "/^\$/q; s/^$2: //p"
+}
+
+# Print a new message id: 128 random bits in hex.
+new_id () {
+	id=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n') &&
+	test ${#id} = 32 && echo $id ||
+	die "cannot generate a message id"
+}
+
+# Write the typed message: kind, optional code commit, optional retracted id, body.
 write_message () {
 	case "$1" in
 	""|*[!a-z0-9-]*) die "invalid kind: $1" ;;
 	esac
 	test -n "$4" || die "empty message"
+	msg_id=$(new_id) || exit
 	{
 		echo "kind: $1"
+		echo "id: $msg_id"
 		test -z "$2" || echo "code: $2"
 		test -z "$3" || echo "retracts: $3"
 		echo
@@ -87,6 +105,7 @@ write_message () {
 	} >"$tmp.msg"
 }
 
+# Store $tmp.msg as a checkpoint with the given parents and print its ID.
 checkpoint () {
 	parents=
 	for p
@@ -121,6 +140,9 @@ cmd_commit () {
 		esac
 		shift
 	done
+	case "$kind" in
+	merge|retract) die "kind $kind is reserved for git cs merge and revert" ;;
+	esac
 	git check-ref-format "$(ref "$branch" 2>/dev/null)" || die "invalid context branch: $branch"
 	if test -n "$code"
 	then
@@ -138,23 +160,27 @@ cmd_show () {
 	git cat-file blob $c:message
 }
 
-# Every message leading to the checkpoint, oldest first, without merges and retracted ones.
+# Every message leading to the checkpoint, oldest first, once per id, without
+# merges, retractions and the messages they retract.
 cmd_context () {
 	c=$(rev "$1") || exit
 	retracted=$(git rev-list $c | while read -r r
 		do
-			git cat-file blob $r:message | sed -n '/^$/q; s/^retracts: //p'
+			field $r retracts
 		done | tr '\n' ' ')
+	seen=
 	git rev-list --reverse --topo-order $c |
 	while read -r r
 	do
-		kind=$(git cat-file blob $r:message | sed -n '1s/^kind: //p')
+		kind=$(field $r kind)
 		case "$kind" in
 		merge|retract) continue ;;
 		esac
-		case " $retracted " in
-		*" $r "*) continue ;;
+		id=$(field $r id)
+		case " $retracted $seen " in
+		*" ${id:-$r} "*) continue ;;
 		esac
+		seen="$seen ${id:-$r}"
 		printf '%s %s: %s\n' $(git rev-parse --short $r) "$kind" "$(body $r)"
 	done
 }
@@ -212,40 +238,19 @@ cmd_label () {
 	test "$op" != resolve || git for-each-ref --format='%(objectname)' refs/cs/labels/$name/
 }
 
-# Copy checkpoint $2 on top of $1, remapping a retraction if $3 maps its target.
+# Print a copy of checkpoint $2 on top of $1; a message never conflicts, and
+# the copy keeps the message id.
 replay () {
-	tree=$2^{tree}
-	if test -n "$3"
-	then
-		retracted=$(git cat-file blob "$2:message" | sed -n '/^$/q; s/^retracts: //p')
-		if test -n "$retracted"
-		then
-			mapped=$(awk -v old="$retracted" '$1 == old { print $2; exit }' "$3")
-			if test -n "$mapped"
-			then
-				git cat-file blob "$2:message" |
-				awk -v old="$retracted" -v new="$mapped" '
-					!body && $0 == "retracts: " old { $0 = "retracts: " new }
-					/^$/ { body = 1 }
-					{ print }
-				' >"$tmp.replayed-message" || return
-				blob=$(git hash-object -w "$tmp.replayed-message") &&
-				tree=$(printf '100644 blob %s\tmessage\n' "$blob" | git mktree) || return
-			fi
-		fi
-	fi
-	git log -1 --format=%B $2 | git commit-tree "$tree" -p $1
+	git log -1 --format=%B $2 | git commit-tree $2^{tree} -p $1
 }
 
 cmd_rebase () {
 	old=$(git rev-parse --verify "$(ref "$1")") &&
 	new=$(rev "$2") || exit
 	test -z "$(git rev-list --min-parents=2 $new..$old)" || die "cannot replay merge checkpoints"
-	: >"$tmp.map"
 	for c in $(git rev-list --reverse $new..$old)
 	do
-		new=$(replay $new $c "$tmp.map") || exit
-		printf '%s %s\n' "$c" "$new" >>"$tmp.map"
+		new=$(replay $new $c) || exit
 	done
 	git update-ref --create-reflog refs/cs/recovery/"$1" $old &&
 	git update-ref --create-reflog "$(ref "$1")" $new $old 2>/dev/null || stale
@@ -263,7 +268,12 @@ cmd_cherry_pick () {
 cmd_revert () {
 	old=$(git rev-parse --verify "$(ref "$1")") &&
 	c=$(rev "$2") || exit
-	write_message retract "" $c "Retract: $(git log -1 --format=%s $c)"
+	case "$(field $c kind)" in
+	merge|retract) die "cannot retract a $(field $c kind) checkpoint: $2" ;;
+	esac
+	id=$(field $c id)
+	test -n "$id" || die "checkpoint has no id: $2"
+	write_message retract "" $id "Retract: $(git log -1 --format=%s $c)"
 	new=$(checkpoint $old) || exit
 	git update-ref --create-reflog "$(ref "$1")" $new $old 2>/dev/null || stale
 	echo $new
@@ -356,7 +366,8 @@ cmd_fsck () {
 			echo "not a checkpoint: $name"
 			continue
 		fi
-		code=$(git cat-file blob $c:message | sed -n '/^$/q; s/^code: //p')
+		test -n "$(field $c id)" || echo "missing id: $name"
+		code=$(field $c code)
 		test -z "$code" || git cat-file -e "$code^{commit}" 2>/dev/null ||
 		echo "missing code commit: $name -> $code"
 	done
@@ -366,7 +377,7 @@ cmd_fsck () {
 		case "$n" in
 		(0) echo "unlinked: $code" ;;
 		(1)
-			if test "$(git ls-tree --name-only $ctx 2>/dev/null)" != message
+			if ! is_checkpoint "$ctx"
 			then
 				echo "link to non-checkpoint: $code -> $ctx"
 			else

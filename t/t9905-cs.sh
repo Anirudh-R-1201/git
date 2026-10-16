@@ -8,6 +8,15 @@ kind_of () {
 	git cs show "$1" | sed -n "1s/^kind: //p"
 }
 
+id_of () {
+	git cs show "$1" | sed -n "/^\$/q; s/^id: //p"
+}
+
+# The message without its random id line.
+show_without_id () {
+	git cs show "$1" | sed "/^id: [0-9a-f]\{32\}\$/d"
+}
+
 test_expect_success 'commit -m stores one typed message without touching code' '
 	test_commit code &&
 	base=$(git cs commit main -m "Investigate SQLite") &&
@@ -15,7 +24,9 @@ test_expect_success 'commit -m stores one typed message without touching code' '
 	git ls-tree --name-only $base >names &&
 	echo message >expect &&
 	test_cmp expect names &&
-	git cs show $base >actual &&
+	git cs show $base | sed -n 2p >id &&
+	test_grep "^id: [0-9a-f]\{32\}\$" id &&
+	show_without_id $base >actual &&
 	printf "kind: message\n\nInvestigate SQLite\n" >expect &&
 	test_cmp expect actual
 '
@@ -23,7 +34,7 @@ test_expect_success 'commit -m stores one typed message without touching code' '
 test_expect_success 'commit takes a kind, an optional code commit and a message file' '
 	printf "Use WAL mode\n\nback\\\\slash and \\\\n stay literal\n" >msg &&
 	two=$(git cs commit main -F msg --kind learning --code HEAD) &&
-	git cs show $two >actual &&
+	show_without_id $two >actual &&
 	{
 		echo "kind: learning" &&
 		echo "code: $(git rev-parse HEAD)" &&
@@ -34,6 +45,19 @@ test_expect_success 'commit takes a kind, an optional code commit and a message 
 	git log -1 --format=%s $two >subject &&
 	echo "learning: Use WAL mode" >expect &&
 	test_cmp expect subject
+'
+
+test_expect_success 'every message gets its own id, even with the same text' '
+	a=$(git cs commit ids -m same) &&
+	b=$(git cs commit ids -m same) &&
+	test -n "$(id_of $a)" &&
+	test "$(id_of $a)" != "$(id_of $b)"
+'
+
+test_expect_success 'commit refuses the kinds git cs records itself' '
+	test_must_fail git cs commit main -m x --kind merge 2>err &&
+	test_grep "reserved" err &&
+	test_must_fail git cs commit main -m x --kind retract
 '
 
 test_expect_success 'commit rejects bad kinds, missing code commits and empty messages' '
@@ -195,6 +219,58 @@ test_expect_success 'rebase keeps retractions of replayed messages' '
 	! grep "obsolete learning" actual
 '
 
+test_expect_success 'copies keep the id, so a retraction hides every copy' '
+	git cs branch id-src $base &&
+	learning=$(git cs commit id-src -m "picked learning" --kind learning) &&
+	retraction=$(git cs revert id-src "$learning") &&
+	git cs branch id-pick $base &&
+	copy=$(git cs cherry-pick id-pick "$learning") &&
+	test "$(id_of $copy)" = "$(id_of $learning)" &&
+	git cs context id-pick >actual &&
+	test_grep "picked learning" actual &&
+	git cs cherry-pick id-pick "$retraction" &&
+	git cs context id-pick >actual &&
+	! grep "picked learning" actual
+'
+
+test_expect_success 'a merged retraction hides a copy picked earlier' '
+	git cs branch id-merge $base &&
+	git cs cherry-pick id-merge "$learning" &&
+	git cs merge id-merge id-src --no-ff &&
+	git cs context id-merge >actual &&
+	! grep "picked learning" actual
+'
+
+test_expect_success 'a message that reaches a branch twice is shown once' '
+	git cs branch id-twice $base &&
+	kept=$(git cs commit id-twice -m "kept learning" --kind learning) &&
+	git cs branch id-twice-pick $base &&
+	git cs cherry-pick id-twice-pick "$kept" &&
+	git cs merge id-twice id-twice-pick --no-ff &&
+	git cs context id-twice >actual &&
+	grep -c "kept learning" actual >count &&
+	echo 1 >expect &&
+	test_cmp expect count
+'
+
+test_expect_success 'retracting one of two identical messages keeps the other' '
+	git cs branch id-same $base &&
+	first=$(git cs commit id-same -m "same text" --kind learning) &&
+	git cs commit id-same -m "same text" --kind learning &&
+	git cs revert id-same "$first" &&
+	git cs context id-same >actual &&
+	grep -c "same text" actual >count &&
+	echo 1 >expect &&
+	test_cmp expect count
+'
+
+test_expect_success 'revert refuses merge and retract checkpoints' '
+	test_must_fail git cs revert id-same id-same 2>err &&
+	test_grep "cannot retract a retract checkpoint" err &&
+	test_must_fail git cs revert id-merge id-merge 2>err &&
+	test_grep "cannot retract a merge checkpoint" err
+'
+
 test_expect_success 'cherry-pick copies one message and revert retracts it' '
 	git cs branch pick $base &&
 	git cs cherry-pick pick topic &&
@@ -258,6 +334,15 @@ test_expect_success 'fsck reports a link to a commit that is not a checkpoint' '
 	test_grep ! "unpinned link: $bad" out
 '
 
+test_expect_success 'fsck reports checkpoints without an id' '
+	git cs show main | sed "/^id: /d" >noid &&
+	tree=$(printf "100644 blob %s\tmessage\n" $(git hash-object -w noid) | git mktree) &&
+	git update-ref refs/cs/heads/noid $(git commit-tree -m noid $tree) &&
+	test_must_fail git cs fsck code..HEAD >out 2>&1 &&
+	test_grep "missing id: refs/cs/heads/noid" out &&
+	git update-ref -d refs/cs/heads/noid
+'
+
 test_expect_success 'linked context survives branch deletion and gc' '
 	ctx=$(git rev-parse refs/cs/heads/main) &&
 	git update-ref -d refs/cs/heads/main &&
@@ -289,6 +374,10 @@ test_expect_success 'bundle carries context offline' '
 	git init offline &&
 	git -C offline fetch ../cs.bundle "refs/cs/*:refs/cs/*" HEAD:refs/heads/in &&
 	git -C offline cs show "$(git -C offline cs links --code in)"
+'
+
+test_expect_success 'no temporary files are left behind' '
+	test_path_is_missing .git/cs-tmp.*
 '
 
 test_done

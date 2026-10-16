@@ -159,7 +159,8 @@ COMMANDS
 	Check that every ref under `refs/cs/` is a checkpoint whose `code`
 	field, if any, names an existing commit, and that every code
 	commit selected by _<code-revs>_ (default: all branches) names
-	exactly one pinned checkpoint. Pass a range such as
+	exactly one pinned checkpoint, reporting a link to anything that
+	is not a checkpoint as such. Pass a range such as
 	`origin/master..` to skip history written before context was
 	tracked.
 

@@ -230,6 +230,15 @@ test_expect_success 'fsck requires exactly one pinned link per code commit' '
 	git update-ref -d refs/cs/heads/bogus
 '
 
+test_expect_success 'fsck reports a link to a commit that is not a checkpoint' '
+	git cat-file commit HEAD >raw &&
+	sed "s/^context .*/context $(git rev-parse code)/" raw >raw2 &&
+	bad=$(git hash-object -t commit -w raw2) &&
+	test_must_fail git cs fsck code..$bad >out 2>&1 &&
+	test_grep "link to non-checkpoint: $bad -> $(git rev-parse code)" out &&
+	test_grep ! "unpinned link: $bad" out
+'
+
 test_expect_success 'linked context survives branch deletion and gc' '
 	ctx=$(git rev-parse refs/cs/heads/main) &&
 	git update-ref -d refs/cs/heads/main &&

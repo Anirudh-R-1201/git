@@ -338,7 +338,14 @@ cmd_fsck () {
 	do
 		case "$n" in
 		(0) echo "unlinked: $code" ;;
-		(1) git rev-parse -q --verify refs/cs/pins/$ctx >/dev/null || echo "unpinned link: $code -> $ctx" ;;
+		(1)
+			if test "$(git ls-tree --name-only $ctx 2>/dev/null)" != message
+			then
+				echo "link to non-checkpoint: $code -> $ctx"
+			else
+				git rev-parse -q --verify refs/cs/pins/$ctx >/dev/null ||
+				echo "unpinned link: $code -> $ctx"
+			fi ;;
 		(*) echo "several links: $code" ;;
 		esac
 	done)

@@ -59,14 +59,20 @@ ref () {
 	esac
 }
 
+is_checkpoint () {
+	git ls-tree "$1" 2>/dev/null |
+	awk -F '\t' 'NR == 1 && $2 == "message" &&
+		$1 ~ /^100(644|755) blob [0-9a-f]+$/ { valid = 1 }
+		END { exit !(NR == 1 && valid) }'
+}
+
 # Print the full ID of checkpoint $1, or die. Context branch names win over code refs.
 rev () {
 	c=$(git rev-parse -q --verify "$(ref "$1" 2>/dev/null)^{commit}" || git rev-parse -q --verify "$1^{commit}") &&
-	test "$(git ls-tree --name-only $c 2>/dev/null)" = message && echo $c ||
+		is_checkpoint "$c" && echo $c ||
 	die "not a cs checkpoint: $1"
 }
 
-# Write the typed message: kind, optional code commit, optional retracted checkpoint, body.
 write_message () {
 	case "$1" in
 	""|*[!a-z0-9-]*) die "invalid kind: $1" ;;
@@ -81,7 +87,6 @@ write_message () {
 	} >"$tmp.msg"
 }
 
-# Store $tmp.msg as a checkpoint with the given parents and print its ID.
 checkpoint () {
 	parents=
 	for p
@@ -207,18 +212,40 @@ cmd_label () {
 	test "$op" != resolve || git for-each-ref --format='%(objectname)' refs/cs/labels/$name/
 }
 
-# Print a copy of checkpoint $2 on top of $1; a message never conflicts.
+# Copy checkpoint $2 on top of $1, remapping a retraction if $3 maps its target.
 replay () {
-	git log -1 --format=%B $2 | git commit-tree $2^{tree} -p $1
+	tree=$2^{tree}
+	if test -n "$3"
+	then
+		retracted=$(git cat-file blob "$2:message" | sed -n '/^$/q; s/^retracts: //p')
+		if test -n "$retracted"
+		then
+			mapped=$(awk -v old="$retracted" '$1 == old { print $2; exit }' "$3")
+			if test -n "$mapped"
+			then
+				git cat-file blob "$2:message" |
+				awk -v old="$retracted" -v new="$mapped" '
+					!body && $0 == "retracts: " old { $0 = "retracts: " new }
+					/^$/ { body = 1 }
+					{ print }
+				' >"$tmp.replayed-message" || return
+				blob=$(git hash-object -w "$tmp.replayed-message") &&
+				tree=$(printf '100644 blob %s\tmessage\n' "$blob" | git mktree) || return
+			fi
+		fi
+	fi
+	git log -1 --format=%B $2 | git commit-tree "$tree" -p $1
 }
 
 cmd_rebase () {
 	old=$(git rev-parse --verify "$(ref "$1")") &&
 	new=$(rev "$2") || exit
 	test -z "$(git rev-list --min-parents=2 $new..$old)" || die "cannot replay merge checkpoints"
+	: >"$tmp.map"
 	for c in $(git rev-list --reverse $new..$old)
 	do
-		new=$(replay $new $c) || exit
+		new=$(replay $new $c "$tmp.map") || exit
+		printf '%s %s\n' "$c" "$new" >>"$tmp.map"
 	done
 	git update-ref --create-reflog refs/cs/recovery/"$1" $old &&
 	git update-ref --create-reflog "$(ref "$1")" $new $old 2>/dev/null || stale
@@ -324,7 +351,7 @@ cmd_fsck () {
 	bad=$(git for-each-ref --format='%(objectname) %(refname)' refs/cs/ |
 	while read -r c name
 	do
-		if test "$(git ls-tree --name-only $c 2>/dev/null)" != message
+		if ! is_checkpoint "$c"
 		then
 			echo "not a checkpoint: $name"
 			continue

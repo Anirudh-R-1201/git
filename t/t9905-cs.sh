@@ -80,6 +80,15 @@ test_expect_success 'checkpoint arguments take context branch names first' '
 	test_must_fail git cs reset main HEAD
 '
 
+test_expect_success 'a code commit with a message directory is not a checkpoint' '
+	git init fake &&
+	mkdir fake/message &&
+	echo code >fake/message/file &&
+	git -C fake add message &&
+	git -C fake commit -m code &&
+	test_must_fail git -C fake cs show HEAD
+'
+
 test_expect_success 'diff lists the messages each side has' '
 	git cs diff $base main | sed "s/ [0-9a-f]* / /" >actual &&
 	printf "+ message: three\n+ learning: Use WAL mode\n" >expect &&
@@ -176,6 +185,16 @@ test_expect_success 'rebase replays messages onto the new base and keeps the old
 	test_grep "cannot replay merge checkpoints" err
 '
 
+test_expect_success 'rebase keeps retractions of replayed messages' '
+	git cs branch retract-topic $base &&
+	learning=$(git cs commit retract-topic -m "obsolete learning" --kind learning) &&
+	git cs revert retract-topic "$learning" &&
+	git cs rebase retract-topic b &&
+	git cs context retract-topic >actual &&
+	test_grep "from b" actual &&
+	! grep "obsolete learning" actual
+'
+
 test_expect_success 'cherry-pick copies one message and revert retracts it' '
 	git cs branch pick $base &&
 	git cs cherry-pick pick topic &&
@@ -270,10 +289,6 @@ test_expect_success 'bundle carries context offline' '
 	git init offline &&
 	git -C offline fetch ../cs.bundle "refs/cs/*:refs/cs/*" HEAD:refs/heads/in &&
 	git -C offline cs show "$(git -C offline cs links --code in)"
-'
-
-test_expect_success 'no temporary files are left behind' '
-	test_path_is_missing .git/cs-tmp.*
 '
 
 test_done

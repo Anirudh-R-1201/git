@@ -58,4 +58,19 @@ test_expect_success 'commit --context rejects names that are not commits' '
 	test_must_fail git commit --allow-empty --context HEAD^{tree} -m bad
 '
 
+test_expect_success 'commit.requireContext refuses commits without a context' '
+	test_config commit.requireContext true &&
+	test_must_fail git commit --allow-empty -m unlinked 2>err &&
+	test_grep "commit.requireContext" err &&
+	git commit --allow-empty --context $(cat ctx) -m linked &&
+	git commit --amend --allow-empty -m "amend keeps its link"
+'
+
+test_expect_success 'commit.requireContext refuses amending an unlinked commit' '
+	git commit --allow-empty -m unlinked &&
+	test_config commit.requireContext true &&
+	test_must_fail git commit --amend --allow-empty -m still-unlinked &&
+	git commit --amend --allow-empty --context $(cat ctx) -m now-linked
+'
+
 test_done

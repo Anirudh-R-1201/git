@@ -131,6 +131,7 @@ static int no_post_rewrite, allow_empty_message, pathspec_file_nul;
 static const char *untracked_files_arg, *force_date, *ignore_submodule_arg, *ignored_arg;
 static const char *sign_commit, *pathspec_from_file;
 static const char *context_arg;
+static int require_context;
 static struct object_id context_oid;
 static struct strvec trailer_args = STRVEC_INIT;
 
@@ -1683,6 +1684,10 @@ static int git_commit_config(const char *k, const char *v,
 		FREE_AND_NULL(cleanup_config);
 		return git_config_string(&cleanup_config, k, v);
 	}
+	if (!strcmp(k, "commit.requirecontext")) {
+		require_context = git_config_bool(k, v);
+		return 0;
+	}
 	if (!strcmp(k, "commit.gpgsign")) {
 		sign_commit = git_config_bool(k, v) ? "" : NULL;
 		return 0;
@@ -1827,6 +1832,16 @@ int cmd_commit(int argc,
 					  prefix, current_head, &s);
 	if (context_arg && repo_get_context_oid(the_repository, context_arg, &context_oid))
 		die(_("not a valid commit name %s"), context_arg);
+	if (require_context && !context_arg) {
+		const char *buf = amend ?
+			repo_get_commit_buffer(the_repository, current_head, NULL) : NULL;
+		size_t len;
+
+		if (!buf || !find_commit_header(buf, "context", &len))
+			die(_("commit.requireContext is set; name the context "
+			      "checkpoint with --context <commit>"));
+		repo_unuse_commit_buffer(the_repository, current_head, buf);
+	}
 	if (trailer_args.nr)
 		trailer_config_init();
 

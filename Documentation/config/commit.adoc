@@ -4,6 +4,11 @@ endif::git-commit[]
 ifndef::git-commit[]
 :see-git-commit: See linkgit:git-commit[1] for details.
 endif::git-commit[]
+`commit.requireContext`::
+	A boolean to make `git commit` refuse to create a commit that does
+	not name its context checkpoint with `--context`, unless it amends
+	a commit that already has one. {see-git-commit}
+
 `commit.cleanup`::
 	This setting overrides the default of the `--cleanup` option in
 	`git commit`. {see-git-commit} Changing the default can be useful

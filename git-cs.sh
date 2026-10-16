@@ -4,7 +4,7 @@
 
 SUBDIRECTORY_OK=Yes
 USAGE='[--json] commit <branch> (<payload> | -m <message> [--kind <kind>]) [--expect <checkpoint>]
-   or: show <checkpoint>
+   or: show <checkpoint> [--messages]
    or: log <branch>
    or: diff <checkpoint> <checkpoint>
    or: branch <name> <checkpoint> [--through <chunk>]
@@ -119,6 +119,11 @@ cmd_commit () {
 }
 
 cmd_show () {
+	test "$2" != --messages || {
+		cmd_show "$1" | jq -r '(.chunks | map({key: .id, value: .}) | from_entries) as $c |
+			.active[] | "\(.) \($c[.].kind // "chunk"): \($c[.].body // "")"'
+		return
+	}
 	rev=$(rev "$1") || exit
 	{
 		git cat-file blob $rev:context.json &&

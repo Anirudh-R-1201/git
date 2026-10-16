@@ -48,6 +48,9 @@ test_expect_success 'commit -m appends plain messages without a payload' '
 	test_cmp expect count &&
 	git cs log notes >log &&
 	grep "Use WAL mode$" log &&
+	git cs show notes --messages | sed "s/^m[0-9a-f]* //" >actual &&
+	printf "message: Investigate SQLite\nlearning: Use WAL mode\n" >expect &&
+	test_cmp expect actual &&
 	test_expect_code 75 git cs commit notes -m late --expect $first &&
 	test_must_fail git cs commit notes p.json -m both
 '

@@ -9,7 +9,7 @@ SYNOPSIS
 --------
 [synopsis]
 git cs commit <branch> (<payload> | -m <message> [--kind <kind>]) [--expect <checkpoint>]
-git cs show <checkpoint>
+git cs show <checkpoint> [--messages]
 git cs log <branch>
 git cs diff <checkpoint> <checkpoint>
 git cs branch <name> <checkpoint> [--through <chunk>]
@@ -98,9 +98,11 @@ commits are refused.
 	the branch is still at _<checkpoint>_, so concurrent writers
 	cannot overwrite each other.
 
-`show <checkpoint>`::
+`show <checkpoint> [--messages]`::
 	Print the payload stored in _<checkpoint>_. The output can be
-	given back to `commit` unchanged.
+	given back to `commit` unchanged. With `--messages`, print the
+	active chunks as plain text instead, one `<id> <kind>: <body>`
+	entry each, in order.
 
 `log <branch>`::
 	List the checkpoints on _<branch>_, newest first, each with its

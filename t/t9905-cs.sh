@@ -216,7 +216,7 @@ test_expect_success 'rebase keeps retractions of replayed messages' '
 	git cs rebase retract-topic b &&
 	git cs context retract-topic >actual &&
 	test_grep "from b" actual &&
-	! grep "obsolete learning" actual
+	test_grep ! "obsolete learning" actual
 '
 
 test_expect_success 'copies keep the id, so a retraction hides every copy' '
@@ -230,7 +230,7 @@ test_expect_success 'copies keep the id, so a retraction hides every copy' '
 	test_grep "picked learning" actual &&
 	git cs cherry-pick id-pick "$retraction" &&
 	git cs context id-pick >actual &&
-	! grep "picked learning" actual
+	test_grep ! "picked learning" actual
 '
 
 test_expect_success 'a merged retraction hides a copy picked earlier' '
@@ -238,7 +238,7 @@ test_expect_success 'a merged retraction hides a copy picked earlier' '
 	git cs cherry-pick id-merge "$learning" &&
 	git cs merge id-merge id-src --no-ff &&
 	git cs context id-merge >actual &&
-	! grep "picked learning" actual
+	test_grep ! "picked learning" actual
 '
 
 test_expect_success 'a message that reaches a branch twice is shown once' '

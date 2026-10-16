@@ -42,6 +42,8 @@ USAGE='init
    or: fetch <remote>
    or: bundle <file> [<code-refs>...]'
 
+# git-sh-setup handles -h before trying to find a repository.
+test "$1" != --help-all || set -- -h
 . git-sh-setup
 
 tmp="$GIT_DIR/cs-tmp.$$"

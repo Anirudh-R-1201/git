@@ -1,7 +1,7 @@
 #!/bin/sh
 # Usage: cs-wait <me> <agent>...
 # Rebase context branch <me> onto the team context until every <agent> has published
-# a learning (about three minutes at most), then print the context.
+# a learning (about three minutes at most), then print the context or fail.
 me=$1; shift
 for i in $(seq 1 18)
 do
@@ -16,4 +16,8 @@ do
 	echo "cs-wait: waiting for:$missing" >&2
 	sleep 10
 done
+test -z "$missing" || {
+	echo "cs-wait: timed out waiting for:$missing" >&2
+	exit 1
+}
 git cs context "$me"

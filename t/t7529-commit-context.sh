@@ -35,7 +35,7 @@ test_expect_success 'commit-tree --context records the context header' '
 test_expect_success 'commit-tree without --context writes no header' '
 	commit=$(git commit-tree -p HEAD -m plain HEAD^{tree}) &&
 	git cat-file commit $commit >raw &&
-	! grep "^context " raw
+	test_grep ! "^context " raw
 '
 
 test_expect_success 'commit-tree --context rejects names that are not commits' '

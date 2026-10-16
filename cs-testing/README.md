@@ -2,12 +2,13 @@
 
 `git cs` (ContextShadow) versions captured context, such as agent messages
 and learnings, in a commit history kept apart from code, with explicit links
-from code commits to the exact context that produced them. The behaviour it
-must have is defined by the design document in this directory,
-[ContextShadow_Design.tex](ContextShadow_Design.tex) (v0.1), with the
-decisions recorded in [DESIGN-NOTES.md](DESIGN-NOTES.md).
+from code commits to the exact context that produced them. The original design
+is [ContextShadow_Design.tex](ContextShadow_Design.tex) (v0.1); implementation
+changes from it are recorded in [DESIGN-NOTES.md](DESIGN-NOTES.md).
 
-Latest results, including a table of every primitive: [RESULTS.md](RESULTS.md).
+The source-backed primitive reference and coding-team use case are in
+[PRIMITIVES.md](PRIMITIVES.md). Current test results are in
+[RESULTS.md](RESULTS.md).
 
 There are three layers of tests:
 
@@ -28,6 +29,17 @@ make
 ```bash
 cd t && ./t9905-cs.sh && ./t7529-commit-context.sh
 ```
+
+The full Git shell suite and separate C unit suite run from the repository
+root:
+
+```bash
+make -j12 test
+make -C t unit-tests
+```
+
+The shell suite includes a local IPC daemon test, which needs permission to
+create local sockets.
 
 These also run with the rest of git's suite. Related git suites worth
 running after a change: `t0012-help.sh`, `t7500-commit-template-squash-signoff.sh`

@@ -1994,7 +1994,7 @@ int cmd_commit(int argc,
 		append_context_header(&context_oid, &tail);
 	}
 
-	if (repo_keep_context(the_repository, extra, &err)) {
+	if (repo_keep_context(the_repository, extra, 0, &err)) {
 		rollback_index_files();
 		die("%s", err.buf);
 	}

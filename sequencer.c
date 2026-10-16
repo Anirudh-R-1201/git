@@ -1726,7 +1726,7 @@ static int try_to_commit(struct repository *r,
 		free(email);
 	}
 
-	if (repo_keep_context(r, extra, &err)) {
+	if (repo_keep_context(r, extra, KEEP_CONTEXT_REQUIRED, &err)) {
 		res = error("%s", err.buf);
 		goto out;
 	}
@@ -4265,6 +4265,19 @@ static int do_merge(struct repository *r,
 		goto leave_merge;
 	}
 
+	/* A recreated merge keeps the context of the merge it recreates. */
+	if (commit) {
+		int err = repo_commit_context(r, commit, &opts->ctx->context);
+
+		if (err == -2) {
+			ret = error(_("commit %s names a context that is not a checkpoint: %s"),
+				    oid_to_hex(&commit->object.oid),
+				    oid_to_hex(&opts->ctx->context));
+			goto leave_merge;
+		}
+		opts->ctx->have_context = !err;
+	}
+
 	/*
 	 * For octopus merges, the arg starts with the list of revisions to be
 	 * merged. The list is optionally followed by '#' and the oneline.
@@ -4433,6 +4446,9 @@ static int do_merge(struct repository *r,
 		strvec_push(&cmd.args, "--no-stat");
 		strvec_push(&cmd.args, "-F");
 		strvec_push(&cmd.args, git_path_merge_msg(r));
+		if (opts->ctx->have_context)
+			strvec_pushl(&cmd.args, "--context",
+				     oid_to_hex(&opts->ctx->context), NULL);
 		if (opts->gpg_sign)
 			strvec_pushf(&cmd.args, "-S%s", opts->gpg_sign);
 		else
@@ -4538,6 +4554,7 @@ static int do_merge(struct repository *r,
 
 
 leave_merge:
+	opts->ctx->have_context = 0;
 	strbuf_release(&ref_name);
 	rollback_lock_file(&lock);
 	commit_list_free(to_merge);

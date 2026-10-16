@@ -1470,7 +1470,7 @@ int repo_get_context_oid(struct repository *r, const char *name,
 
 int repo_keep_context(struct repository *r,
 		      const struct commit_extra_header *extra,
-		      struct strbuf *err)
+		      unsigned flags, struct strbuf *err)
 {
 	struct object_id oid;
 	struct strbuf ref = STRBUF_INIT;
@@ -1480,8 +1480,16 @@ int repo_keep_context(struct repository *r,
 	for (; extra; extra = extra->next)
 		if (!strcmp(extra->key, "context"))
 			break;
-	if (!extra)
+	if (!extra) {
+		if ((flags & KEEP_CONTEXT_REQUIRED) &&
+		    !repo_config_get_bool(r, "commit.requirecontext", &require) &&
+		    require) {
+			strbuf_addstr(err, _("commit.requireContext is set; name the "
+					     "context checkpoint with --context <commit>"));
+			return -1;
+		}
 		return 0;
+	}
 	/* Headers read back from a commit keep their newline. */
 	value_end = extra->value + extra->len;
 	if (value_end > extra->value && value_end[-1] == '\n')

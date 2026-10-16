@@ -298,6 +298,40 @@ test_expect_success 'merge without commit.requireContext commits unlinked' '
 	test -z "$(context_of HEAD)"
 '
 
+test_expect_success 'revert stops for a context with commit.requireContext' '
+	test_config commit.requireContext true &&
+	git checkout -b revert-stop other &&
+	test_must_fail git revert --no-edit HEAD 2>err &&
+	test_grep "commit.requireContext is set" err &&
+	test "$(git rev-parse HEAD)" = "$(git rev-parse other)" &&
+	git commit --no-edit --context $(cat ctx) &&
+	test "$(context_of HEAD)" = "$(cat ctx)" &&
+	git log -1 --format=%s >subject &&
+	test_grep "^Revert " subject
+'
+
+test_expect_success 'cherry-pick of an unlinked commit stops with commit.requireContext' '
+	git checkout -b unlinked-src other &&
+	git commit --allow-empty -m unlinked-src &&
+	test_config commit.requireContext true &&
+	git checkout -b unlinked-pick other &&
+	test_must_fail git cherry-pick --allow-empty unlinked-src 2>err &&
+	test_grep "commit.requireContext is set" err &&
+	git commit --allow-empty --no-edit --context $(cat ctx) &&
+	test "$(context_of HEAD)" = "$(cat ctx)"
+'
+
+test_expect_success 'rebase --rebase-merges keeps the context of recreated merges' '
+	test_config commit.requireContext true &&
+	git checkout -b remerge other &&
+	git merge --no-edit --context $(cat ctx2) topic &&
+	git commit --allow-empty --context $(cat ctx) -m on-top &&
+	git rebase --rebase-merges --force-rebase HEAD~2 &&
+	test "$(context_of HEAD^)" = "$(cat ctx2)" &&
+	git rev-parse HEAD^^2 &&
+	test "$(git rev-parse HEAD^)" != "$(git rev-parse remerge@{1}^)"
+'
+
 test_expect_success 'cherry-pick refuses a commit linked to a non-checkpoint' '
 	git checkout -b badpick other &&
 	bad=$(relink topic $(git rev-parse other)) &&

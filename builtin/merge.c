@@ -1005,7 +1005,7 @@ static void write_merge_commit(const struct object_id *tree,
 
 	if (context_arg)
 		append_context_header(&context_oid, &tail);
-	if (repo_keep_context(the_repository, extra, &err))
+	if (repo_keep_context(the_repository, extra, 0, &err))
 		die("%s", err.buf);
 	if (commit_tree_extended(merge_msg.buf, merge_msg.len, tree, parents,
 				 result, NULL, NULL, sign_commit, extra))

@@ -310,12 +310,15 @@ int repo_get_context_oid(struct repository *r, const char *name,
 /*
  * Check that the "context" header among "extra", if any, names a context
  * checkpoint and, with commit.requireContext set, pin that checkpoint in
- * refs/cs/pins/ so it outlives the context branches. Return 0 on success,
- * or -1 with a message in "err".
+ * refs/cs/pins/ so it outlives the context branches. With
+ * KEEP_CONTEXT_REQUIRED, also refuse a missing header when
+ * commit.requireContext is set. Return 0 on success, or -1 with a message
+ * in "err".
  */
+#define KEEP_CONTEXT_REQUIRED (1 << 0)
 int repo_keep_context(struct repository *r,
 		      const struct commit_extra_header *extra,
-		      struct strbuf *err);
+		      unsigned flags, struct strbuf *err);
 
 int commit_tree(const char *msg, size_t msg_len,
 		const struct object_id *tree,

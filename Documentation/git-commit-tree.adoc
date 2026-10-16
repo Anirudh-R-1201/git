@@ -11,7 +11,7 @@ SYNOPSIS
 [verse]
 'git commit-tree' <tree> [(-p <parent>)...]
 'git commit-tree' [(-p <parent>)...] [-S[<keyid>]] [(-m <message>)...]
-		  [(-F <file>)...] <tree>
+		  [(-F <file>)...] [--context <commit>] <tree>
 
 
 DESCRIPTION
@@ -66,6 +66,11 @@ OPTIONS
 	defaults to the committer identity; if specified, it must be
 	stuck to the option without a space. `--no-gpg-sign` is useful to
 	countermand a `--gpg-sign` option given earlier on the command line.
+
+--context <commit>::
+	Record _<commit>_, the context checkpoint this commit was made
+	from, in a `context` header of the new commit. See
+	linkgit:git-cs[1].
 
 Commit Information
 ------------------

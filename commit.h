@@ -278,6 +278,13 @@ struct commit_extra_header {
 void append_merge_tag_headers(const struct commit_list *parents,
 			      struct commit_extra_header ***tail);
 
+/*
+ * Append a "context" header naming the context checkpoint this commit was
+ * made from.
+ */
+void append_context_header(const struct object_id *context,
+			   struct commit_extra_header ***tail);
+
 int commit_tree(const char *msg, size_t msg_len,
 		const struct object_id *tree,
 		const struct commit_list *parents, struct object_id *ret,

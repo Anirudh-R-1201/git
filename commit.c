@@ -1408,6 +1408,19 @@ void append_merge_tag_headers(const struct commit_list *parents,
 	}
 }
 
+void append_context_header(const struct object_id *context,
+			   struct commit_extra_header ***tail)
+{
+	struct commit_extra_header *header;
+
+	CALLOC_ARRAY(header, 1);
+	header->key = xstrdup("context");
+	header->value = xstrdup(oid_to_hex(context));
+	header->len = strlen(header->value);
+	**tail = header;
+	*tail = &header->next;
+}
+
 static int convert_commit_extra_headers(const struct commit_extra_header *orig,
 					struct commit_extra_header **result)
 {

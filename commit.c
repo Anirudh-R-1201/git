@@ -1421,6 +1421,22 @@ void append_context_header(const struct object_id *context,
 	*tail = &header->next;
 }
 
+int repo_commit_context(struct repository *r, struct commit *commit,
+			struct object_id *oid)
+{
+	const char *buf = repo_get_commit_buffer(r, commit, NULL);
+	const char *value, *end;
+	size_t len;
+	int ret = -1;
+
+	value = find_commit_header(buf, "context", &len);
+	if (value && !parse_oid_hex_algop(value, oid, &end, r->hash_algo) &&
+	    end == value + len)
+		ret = 0;
+	repo_unuse_commit_buffer(r, commit, buf);
+	return ret;
+}
+
 int repo_get_context_oid(struct repository *r, const char *name,
 			 struct object_id *oid)
 {

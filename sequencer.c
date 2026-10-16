@@ -240,6 +240,12 @@ struct replay_ctx {
 	 * maintenance turned off. Built on first use.
 	 */
 	char *config_parameters;
+	/*
+	 * The context header of the commit being picked, carried over to
+	 * the new commit.
+	 */
+	struct object_id context;
+	unsigned have_context :1;
 };
 
 struct replay_ctx* replay_ctx_new(void)
@@ -1184,6 +1190,9 @@ static int run_git_commit(const char *defmsg,
 		strvec_push(&cmd.args, "-n");
 	if ((flags & AMEND_MSG))
 		strvec_push(&cmd.args, "--amend");
+	else if (opts->ctx->have_context)
+		strvec_pushl(&cmd.args, "--context",
+			     oid_to_hex(&opts->ctx->context), NULL);
 	if (opts->gpg_sign)
 		strvec_pushf(&cmd.args, "-S%s", opts->gpg_sign);
 	else
@@ -1600,9 +1609,14 @@ static int try_to_commit(struct repository *r,
 		}
 		parents = commit_list_copy(current_head->parents);
 		extra = read_commit_extra_headers(current_head, exclude_gpgsig);
-	} else if (current_head &&
-		   (!(flags & CREATE_ROOT_COMMIT) || (flags & AMEND_MSG))) {
-		commit_list_insert(current_head, &parents);
+	} else {
+		if (current_head && !(flags & CREATE_ROOT_COMMIT))
+			commit_list_insert(current_head, &parents);
+		if (opts->ctx->have_context) {
+			struct commit_extra_header **tail = &extra;
+
+			append_context_header(&opts->ctx->context, &tail);
+		}
 	}
 
 	if (write_index_as_tree(&tree, r->index, r->index_file, 0, NULL)) {
@@ -2459,6 +2473,8 @@ static enum pick_result do_pick_commit(struct repository *r,
 			author = get_author(msg.message);
 	}
 	ctx->have_message = 1;
+	ctx->have_context = command != TODO_REVERT &&
+		!repo_commit_context(r, commit, &ctx->context);
 
 	if (command == TODO_REWORD)
 		reword = 1;
@@ -2616,6 +2632,7 @@ fast_forward_edit:
 	}
 
 leave:
+	ctx->have_context = 0;
 	free_message(commit, &msg);
 	free(author);
 	update_abort_safety_file();

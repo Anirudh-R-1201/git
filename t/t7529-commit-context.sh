@@ -73,4 +73,57 @@ test_expect_success 'commit.requireContext refuses amending an unlinked commit' 
 	git commit --amend --allow-empty --context $(cat ctx) -m now-linked
 '
 
+context_of () {
+	git cat-file commit "$1" | sed -n "s/^context //p"
+}
+
+test_expect_success 'setup branches for replay' '
+	git checkout -b topic &&
+	echo topic >file &&
+	git add file &&
+	git commit --context $(cat ctx) -m topic-change &&
+	git checkout -b other HEAD^ &&
+	echo other >other.t &&
+	git add other.t &&
+	git commit --context $(cat ctx2) -m other-change &&
+	git checkout topic
+'
+
+test_expect_success 'cherry-pick keeps the picked commit context' '
+	git checkout -b pick other &&
+	git cherry-pick topic &&
+	test "$(context_of HEAD)" = "$(cat ctx)"
+'
+
+test_expect_success 'cherry-pick --edit keeps it through git commit' '
+	git reset --hard other &&
+	GIT_EDITOR=true git cherry-pick --edit topic &&
+	test "$(context_of HEAD)" = "$(cat ctx)"
+'
+
+test_expect_success 'rebase keeps every replayed commit context' '
+	git checkout -b rebased topic &&
+	git rebase other &&
+	test "$(context_of HEAD)" = "$(cat ctx)" &&
+	test "$(context_of HEAD^)" = "$(cat ctx2)"
+'
+
+test_expect_success 'resolving a conflicted cherry-pick keeps its context' '
+	git checkout -b clash other &&
+	echo clash >file &&
+	git add file &&
+	git commit --context $(cat ctx2) -m clash &&
+	test_must_fail git cherry-pick topic &&
+	echo resolved >file &&
+	git add file &&
+	test_config commit.requireContext true &&
+	git commit --no-edit &&
+	test "$(context_of HEAD)" = "$(cat ctx)"
+'
+
+test_expect_success 'revert does not copy the reverted commit context' '
+	git revert --no-edit HEAD &&
+	test -z "$(context_of HEAD)"
+'
+
 test_done

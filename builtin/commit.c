@@ -28,6 +28,7 @@
 #include "object-name.h"
 #include "parse-options.h"
 #include "path.h"
+#include "refs.h"
 #include "preload-index.h"
 #include "read-cache.h"
 #include "repository.h"
@@ -1832,16 +1833,24 @@ int cmd_commit(int argc,
 					  prefix, current_head, &s);
 	if (context_arg && repo_get_context_oid(the_repository, context_arg, &context_oid))
 		die(_("not a valid commit name %s"), context_arg);
-	if (require_context && !context_arg) {
-		const char *buf = amend ?
-			repo_get_commit_buffer(the_repository, current_head, NULL) : NULL;
-		size_t len;
+	if (!context_arg && !amend) {
+		/* A conflicted pick keeps the context of the commit it picks. */
+		const char *picks[] = { "CHERRY_PICK_HEAD", "REBASE_HEAD" };
 
-		if (!buf || !find_commit_header(buf, "context", &len))
-			die(_("commit.requireContext is set; name the context "
-			      "checkpoint with --context <commit>"));
-		repo_unuse_commit_buffer(the_repository, current_head, buf);
+		for (size_t i = 0; i < ARRAY_SIZE(picks) && !context_arg; i++) {
+			struct object_id pick;
+			struct commit *c;
+
+			if (!refs_read_ref(get_main_ref_store(the_repository), picks[i], &pick) &&
+			    (c = lookup_commit_reference(the_repository, &pick)) &&
+			    !repo_commit_context(the_repository, c, &context_oid))
+				context_arg = picks[i];
+		}
 	}
+	if (require_context && !context_arg &&
+	    !(amend && !repo_commit_context(the_repository, current_head, &context_oid)))
+		die(_("commit.requireContext is set; name the context "
+		      "checkpoint with --context <commit>"));
 	if (trailer_args.nr)
 		trailer_config_init();
 

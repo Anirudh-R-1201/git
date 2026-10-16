@@ -29,4 +29,33 @@ test_expect_success 'commit-tree --context rejects names that are not commits' '
 	test_must_fail git commit-tree --context nope -m bad HEAD^{tree}
 '
 
+test_expect_success 'commit --context records the context header' '
+	git commit-tree -m other HEAD^{tree} >ctx2 &&
+	test_commit --no-tag one &&
+	git commit --allow-empty --context $(cat ctx) -m linked &&
+	git cat-file commit HEAD >raw &&
+	echo "context $(cat ctx)" >expect &&
+	grep "^context " raw >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'commit --amend keeps the context header' '
+	git commit --amend --allow-empty -m reworded &&
+	git cat-file commit HEAD >raw &&
+	grep "^context " raw >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'commit --amend --context replaces it with exactly one header' '
+	git commit --amend --allow-empty --no-edit --context $(cat ctx2) &&
+	git cat-file commit HEAD >raw &&
+	echo "context $(cat ctx2)" >expect &&
+	grep "^context " raw >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'commit --context rejects names that are not commits' '
+	test_must_fail git commit --allow-empty --context HEAD^{tree} -m bad
+'
+
 test_done

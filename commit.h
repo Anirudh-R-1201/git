@@ -285,6 +285,10 @@ void append_merge_tag_headers(const struct commit_list *parents,
 void append_context_header(const struct object_id *context,
 			   struct commit_extra_header ***tail);
 
+/* Resolve "name" to the commit a "context" header may name; 0 on success. */
+int repo_get_context_oid(struct repository *r, const char *name,
+			 struct object_id *oid);
+
 int commit_tree(const char *msg, size_t msg_len,
 		const struct object_id *tree,
 		const struct commit_list *parents, struct object_id *ret,

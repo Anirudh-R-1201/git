@@ -14,7 +14,7 @@ git commit [-a | --interactive | --patch] [-s] [-v] [-u[<mode>]] [--amend]
 	   [--allow-empty-message] [--no-verify] [-e] [--author=<author>]
 	   [--date=<date>] [--cleanup=<mode>] [--[no-]status]
 	   [-i | -o] [--pathspec-from-file=<file> [--pathspec-file-nul]]
-	   [(--trailer <token>[(=|:)<value>])...] [-S[<keyid>]]
+	   [(--trailer <token>[(=|:)<value>])...] [--context <commit>] [-S[<keyid>]]
 	   [--] [<pathspec>...]
 
 DESCRIPTION
@@ -203,6 +203,12 @@ The `-m` option is mutually exclusive with `-c`, `-C`, and `-F`.
 	is given by other means, e.g. with the `-m` or `-F` options.
 
 include::signoff-option.adoc[]
+
+`--context <commit>`::
+	Record _<commit>_, the context checkpoint this commit was made
+	from, in a `context` header of the new commit. A commit has at
+	most one such header: `--amend` keeps the existing one unless
+	`--context` replaces it. See linkgit:git-cs[1].
 
 `--trailer <token>[(=|:)<value>]`::
 	Specify a (_<token>_, _<value>_) pair that should be applied as a

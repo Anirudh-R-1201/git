@@ -1421,6 +1421,18 @@ void append_context_header(const struct object_id *context,
 	*tail = &header->next;
 }
 
+int repo_get_context_oid(struct repository *r, const char *name,
+			 struct object_id *oid)
+{
+	struct commit *commit;
+
+	if (repo_get_oid_commit(r, name, oid) ||
+	    !(commit = lookup_commit_reference(r, oid)))
+		return -1;
+	oidcpy(oid, &commit->object.oid);
+	return 0;
+}
+
 static int convert_commit_extra_headers(const struct commit_extra_header *orig,
 					struct commit_extra_header **result)
 {

@@ -51,7 +51,7 @@ static const char * const builtin_commit_usage[] = {
 	   "           [--allow-empty-message] [--no-verify] [-e] [--author=<author>]\n"
 	   "           [--date=<date>] [--cleanup=<mode>] [--[no-]status]\n"
 	   "           [-i | -o] [--pathspec-from-file=<file> [--pathspec-file-nul]]\n"
-	   "           [(--trailer <token>[(=|:)<value>])...] [-S[<keyid>]]\n"
+	   "           [(--trailer <token>[(=|:)<value>])...] [--context <commit>] [-S[<keyid>]]\n"
 	   "           [--] [<pathspec>...]"),
 	NULL
 };
@@ -130,6 +130,8 @@ static int config_commit_verbose = -1; /* unspecified */
 static int no_post_rewrite, allow_empty_message, pathspec_file_nul;
 static const char *untracked_files_arg, *force_date, *ignore_submodule_arg, *ignored_arg;
 static const char *sign_commit, *pathspec_from_file;
+static const char *context_arg;
+static struct object_id context_oid;
 static struct strvec trailer_args = STRVEC_INIT;
 
 /*
@@ -1722,6 +1724,8 @@ int cmd_commit(int argc,
 		OPT_BOOL(0, "reset-author", &renew_authorship, N_("the commit is authored by me now (used with -C/-c/--amend)")),
 		OPT_STRVEC(0, "trailer", &trailer_args, N_("trailer"),
 			   N_("add custom trailer(s)")),
+		OPT_STRING(0, "context", &context_arg, N_("commit"),
+			   N_("context checkpoint this commit was made from")),
 		OPT_BOOL('s', "signoff", &signoff, N_("add a Signed-off-by trailer")),
 		OPT_FILENAME('t', "template", &template_file, N_("use specified template file")),
 		OPT_BOOL('e', "edit", &edit_flag, N_("force edit of commit")),
@@ -1821,6 +1825,8 @@ int cmd_commit(int argc,
 	argc = parse_and_validate_options(argc, argv, builtin_commit_options,
 					  builtin_commit_usage,
 					  prefix, current_head, &s);
+	if (context_arg && repo_get_context_oid(the_repository, context_arg, &context_oid))
+		die(_("not a valid commit name %s"), context_arg);
 	if (trailer_args.nr)
 		trailer_config_init();
 
@@ -1928,11 +1934,19 @@ int cmd_commit(int argc,
 	}
 
 	if (amend) {
-		const char *exclude_gpgsig[3] = { "gpgsig", "gpgsig-sha256", NULL };
-		extra = read_commit_extra_headers(current_head, exclude_gpgsig);
+		const char *exclude[] = { "gpgsig", "gpgsig-sha256",
+					  context_arg ? "context" : NULL, NULL };
+		extra = read_commit_extra_headers(current_head, exclude);
 	} else {
 		struct commit_extra_header **tail = &extra;
 		append_merge_tag_headers(parents, &tail);
+	}
+	if (context_arg) {
+		struct commit_extra_header **tail = &extra;
+
+		while (*tail)
+			tail = &(*tail)->next;
+		append_context_header(&context_oid, &tail);
 	}
 
 	if (commit_tree_extended(sb.buf, sb.len, &the_repository->index->cache_tree->oid,

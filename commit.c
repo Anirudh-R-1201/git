@@ -27,6 +27,7 @@
 #include "setup.h"
 #include "shallow.h"
 #include "tree.h"
+#include "tree-walk.h"
 #include "hook.h"
 #include "parse.h"
 #include "object-file.h"
@@ -1421,6 +1422,23 @@ void append_context_header(const struct object_id *context,
 	*tail = &header->next;
 }
 
+int repo_is_context_checkpoint(struct repository *r,
+			       const struct object_id *oid)
+{
+	struct commit *commit = lookup_commit_reference_gently(r, oid, 1);
+	struct tree *tree;
+	struct tree_desc desc;
+	struct name_entry entry;
+
+	if (!commit || repo_parse_commit(r, commit) ||
+	    !(tree = repo_get_commit_tree(r, commit)) ||
+	    repo_parse_tree(r, tree))
+		return 0;
+	init_tree_desc(&desc, &tree->object.oid, tree->buffer, tree->size);
+	return tree_entry(&desc, &entry) && S_ISREG(entry.mode) &&
+	       !strcmp(entry.path, "message") && !tree_entry(&desc, &entry);
+}
+
 int repo_commit_context(struct repository *r, struct commit *commit,
 			struct object_id *oid)
 {
@@ -1432,7 +1450,7 @@ int repo_commit_context(struct repository *r, struct commit *commit,
 	value = find_commit_header(buf, "context", &len);
 	if (value && !parse_oid_hex_algop(value, oid, &end, r->hash_algo) &&
 	    end == value + len)
-		ret = 0;
+		ret = repo_is_context_checkpoint(r, oid) ? 0 : -2;
 	repo_unuse_commit_buffer(r, commit, buf);
 	return ret;
 }
@@ -1446,7 +1464,7 @@ int repo_get_context_oid(struct repository *r, const char *name,
 	    !(commit = lookup_commit_reference(r, oid)))
 		return -1;
 	oidcpy(oid, &commit->object.oid);
-	return 0;
+	return repo_is_context_checkpoint(r, oid) ? 0 : -2;
 }
 
 static int convert_commit_extra_headers(const struct commit_extra_header *orig,

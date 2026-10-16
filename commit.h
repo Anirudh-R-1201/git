@@ -285,11 +285,25 @@ void append_merge_tag_headers(const struct commit_list *parents,
 void append_context_header(const struct object_id *context,
 			   struct commit_extra_header ***tail);
 
-/* Read the "context" header of "commit" into "oid"; 0 if it has one. */
+/*
+ * A context checkpoint is a commit whose tree holds exactly one regular
+ * file, "message" (see git-cs(1)); return 1 if "oid" names one.
+ */
+int repo_is_context_checkpoint(struct repository *r,
+			       const struct object_id *oid);
+
+/*
+ * Read the "context" header of "commit" into "oid". Return 0 if it names a
+ * context checkpoint, -2 if it names anything else, -1 if there is none.
+ */
 int repo_commit_context(struct repository *r, struct commit *commit,
 			struct object_id *oid);
 
-/* Resolve "name" to the commit a "context" header may name; 0 on success. */
+/*
+ * Resolve "name" to the context checkpoint a "context" header may name.
+ * Return 0 on success, -1 if it is not a commit, -2 if it is a commit that
+ * is not a context checkpoint.
+ */
 int repo_get_context_oid(struct repository *r, const char *name,
 			 struct object_id *oid);
 

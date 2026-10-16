@@ -21,6 +21,7 @@
 #include "commit.h"
 #include "add-interactive.h"
 #include "gettext.h"
+#include "hex.h"
 #include "revision.h"
 #include "wt-status.h"
 #include "run-command.h"
@@ -1703,6 +1704,20 @@ static int git_commit_config(const char *k, const char *v,
 	return git_status_config(k, v, ctx, s);
 }
 
+/*
+ * Take the context of "commit" for the new one, refusing a link that does not
+ * name a checkpoint; return "name" if it has one.
+ */
+static const char *inherit_context(struct commit *commit, const char *name)
+{
+	int err = repo_commit_context(the_repository, commit, &context_oid);
+
+	if (err == -2)
+		die(_("%s names a context that is not a checkpoint: %s"),
+		    name, oid_to_hex(&context_oid));
+	return err ? NULL : name;
+}
+
 int cmd_commit(int argc,
 	       const char **argv,
 	       const char *prefix,
@@ -1831,8 +1846,16 @@ int cmd_commit(int argc,
 	argc = parse_and_validate_options(argc, argv, builtin_commit_options,
 					  builtin_commit_usage,
 					  prefix, current_head, &s);
-	if (context_arg && repo_get_context_oid(the_repository, context_arg, &context_oid))
-		die(_("not a valid commit name %s"), context_arg);
+	if (context_arg) {
+		int err = repo_get_context_oid(the_repository, context_arg, &context_oid);
+
+		if (err == -1)
+			die(_("not a valid commit name %s"), context_arg);
+		if (err)
+			die(_("not a context checkpoint: %s"), context_arg);
+	}
+	if (!context_arg && amend)
+		context_arg = inherit_context(current_head, "HEAD");
 	if (!context_arg && !amend) {
 		/* A conflicted pick keeps the context of the commit it picks. */
 		const char *picks[] = { "CHERRY_PICK_HEAD", "REBASE_HEAD" };
@@ -1842,13 +1865,11 @@ int cmd_commit(int argc,
 			struct commit *c;
 
 			if (!refs_read_ref(get_main_ref_store(the_repository), picks[i], &pick) &&
-			    (c = lookup_commit_reference(the_repository, &pick)) &&
-			    !repo_commit_context(the_repository, c, &context_oid))
-				context_arg = picks[i];
+			    (c = lookup_commit_reference(the_repository, &pick)))
+				context_arg = inherit_context(c, picks[i]);
 		}
 	}
-	if (require_context && !context_arg &&
-	    !(amend && !repo_commit_context(the_repository, current_head, &context_oid)))
+	if (require_context && !context_arg)
 		die(_("commit.requireContext is set; name the context "
 		      "checkpoint with --context <commit>"));
 	if (trailer_args.nr)

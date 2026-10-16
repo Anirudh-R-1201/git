@@ -7,7 +7,8 @@ endif::git-commit[]
 `commit.requireContext`::
 	A boolean to make `git commit` refuse to create a commit that does
 	not name its context checkpoint with `--context`, unless it amends
-	a commit that already has one. {see-git-commit}
+	a commit that already has one. Naming a commit that is not a
+	checkpoint does not satisfy it. {see-git-commit}
 
 `commit.cleanup`::
 	This setting overrides the default of the `--cleanup` option in

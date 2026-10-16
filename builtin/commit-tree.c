@@ -149,8 +149,14 @@ int cmd_commit_tree(int argc,
 			die_errno(_("git commit-tree: failed to read"));
 	}
 
-	if (context && repo_get_context_oid(the_repository, context, &context_oid))
-		die(_("not a valid commit name %s"), context);
+	if (context) {
+		int err = repo_get_context_oid(the_repository, context, &context_oid);
+
+		if (err == -1)
+			die(_("not a valid commit name %s"), context);
+		if (err)
+			die(_("not a context checkpoint: %s"), context);
+	}
 
 	append_merge_tag_headers(parents, &tail);
 	if (context)

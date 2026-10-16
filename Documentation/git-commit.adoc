@@ -206,10 +206,13 @@ include::signoff-option.adoc[]
 
 `--context <commit>`::
 	Record _<commit>_, the context checkpoint this commit was made
-	from, in a `context` header of the new commit. A commit has at
-	most one such header: `--amend` keeps the existing one unless
-	`--context` replaces it, and while a cherry-pick or rebase is in
-	progress the commit being replayed supplies it.
+	from, in a `context` header of the new commit. _<commit>_ must be
+	a checkpoint: a commit whose tree holds only a `message` file.
+	A commit has at most one such header: `--amend` keeps the
+	existing one unless `--context` replaces it, and while a
+	cherry-pick or rebase is in progress the commit being replayed
+	supplies it. A kept or replayed header that does not name a
+	checkpoint is refused rather than copied.
 	linkgit:git-cherry-pick[1] and linkgit:git-rebase[1] keep the
 	header of every commit they replay; linkgit:git-revert[1] does
 	not. See linkgit:git-cs[1].

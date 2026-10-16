@@ -2473,8 +2473,17 @@ static enum pick_result do_pick_commit(struct repository *r,
 			author = get_author(msg.message);
 	}
 	ctx->have_message = 1;
-	ctx->have_context = command != TODO_REVERT &&
-		!repo_commit_context(r, commit, &ctx->context);
+	if (command != TODO_REVERT) {
+		int err = repo_commit_context(r, commit, &ctx->context);
+
+		if (err == -2) {
+			res = error(_("commit %s names a context that is not a checkpoint: %s"),
+				    oid_to_hex(&commit->object.oid),
+				    oid_to_hex(&ctx->context));
+			goto leave;
+		}
+		ctx->have_context = !err;
+	}
 
 	if (command == TODO_REWORD)
 		reword = 1;

@@ -86,6 +86,16 @@ test_expect_success 'chunk bytes survive escapes unchanged' '
 	test_cmp expect actual
 '
 
+test_expect_success 'checkpoint arguments take context branch names first' '
+	git cs branch master $base &&
+	test "$(git cs show master)" = "$(git cs show $base)" &&
+	git cs diff main master &&
+	git cs switch w0 master &&
+	test "$(git cs show @w0)" = "$(git cs show $base)" &&
+	git update-ref -d refs/cs/heads/master &&
+	test_must_fail git cs show master
+'
+
 test_expect_success 'show round-trips through commit' '
 	git cs show $base >out.json &&
 	again=$(git cs commit main out.json) &&

@@ -34,9 +34,10 @@ USAGE='[--json] commit <branch> <payload> [--expect <checkpoint>]
 tmp="$GIT_DIR/cs-tmp.$$"
 trap 'rm -f "$tmp".*' 0
 
-# Print the full ID of checkpoint $1, or die.
+# Print the full ID of checkpoint $1, or die. Context branch names win over code refs.
 rev () {
-	git rev-parse -q --verify "$1^{commit}" && git cat-file -e "$1^{commit}:context.json" 2>/dev/null ||
+	c=$(git rev-parse -q --verify "$(ref "$1" 2>/dev/null)^{commit}" || git rev-parse -q --verify "$1^{commit}") &&
+	git cat-file -e $c:context.json 2>/dev/null && echo $c ||
 	die "not a cs checkpoint: $1"
 }
 
@@ -313,7 +314,7 @@ cmd_links () {
 	--code)
 		git log -1 --format='%(trailers:key=Context-Shadow,valueonly)' "$2" ;;
 	--context)
-		ctx=$(git rev-parse --verify "$2^{commit}") || exit
+		ctx=$(rev "$2") || exit
 		shift 2
 		git log --format='%H %(trailers:key=Context-Shadow,valueonly,separator=%x20)' "${@:---branches}" |
 		awk -v ctx=$ctx '{ for (i = 2; i <= NF; i++) if ($i == ctx) print $1 }' ;;

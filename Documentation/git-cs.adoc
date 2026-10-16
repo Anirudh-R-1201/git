@@ -73,15 +73,19 @@ Commands that read or print context use a self-contained payload:
 ------------
 
 `active` lists unique chunk IDs in presentation order, and each must
-have a chunk. A chunk ID always names the same bytes: committing a
+have a chunk. Chunk IDs are unique within a payload and use only
+letters, digits, `.`, `_` and `-`, starting with a letter or digit. A chunk ID always names the same bytes: committing a
 chunk whose ID already exists on the branch tip with different
 contents fails. To edit a chunk, give it a new ID.
 
-A chunk with `sources` is a summary; the checkpoints it lists are
-pinned so they stay recoverable after the summary replaces them.
+A chunk with `sources` is a summary; the full checkpoint IDs it lists
+are pinned so they stay recoverable after the summary replaces them.
 
 COMMANDS
 --------
+Arguments named _<checkpoint>_ must resolve to a context checkpoint;
+code commits are refused.
+
 `commit <branch> <payload> [--expect <checkpoint>]`::
 	Store _<payload>_ as a new checkpoint on top of _<branch>_ and
 	print its ID. With `--expect`, refuse with `STALE_TIP` unless
@@ -132,8 +136,8 @@ COMMANDS
 	Merge _<checkpoint>_ into _<branch>_. A descendant is
 	fast-forwarded unless `--no-ff` is given, which records a
 	merge checkpoint holding the incoming view. Divergent
-	histories are merged by ordered union, or into _<payload>_
-	when `--result` is given.
+	histories are merged by ordered union. With `--result`, a merge
+	checkpoint holding _<payload>_ is always recorded.
 
 `merge-preview <checkpoint> <checkpoint>`::
 	Print the ordered union of two checkpoints without moving any

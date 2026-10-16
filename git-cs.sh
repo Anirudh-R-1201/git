@@ -31,6 +31,15 @@ USAGE='[--json] commit <branch> <payload> [--expect <checkpoint>]
 
 . git-sh-setup
 
+tmp="$GIT_DIR/cs-tmp.$$"
+trap 'rm -f "$tmp".*' 0
+
+# Print the full ID of checkpoint $1, or die.
+rev () {
+	git rev-parse -q --verify "$1^{commit}" && git cat-file -e "$1^{commit}:context.json" 2>/dev/null ||
+	die "not a cs checkpoint: $1"
+}
+
 # A branch name, or @<workspace> for the branch that workspace selected.
 ref () {
 	case "$1" in
@@ -42,14 +51,20 @@ ref () {
 # Store $payload as a checkpoint on top of $tip (and $merge) without moving any ref.
 checkpoint () {
 	jq -e '.schema == "cs/1" and (.active | length == (unique | length)) and
-		([.chunks[].id] as $ids | all(.active[]; IN($ids[])))' "$payload" >/dev/null ||
+		([.chunks[].id] | length == (unique | length) and
+			all(type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._-]*$"))) and
+		([.chunks[].id] as $ids | all(.active[]; IN($ids[]))) and
+		all(.chunks[].sources[]?; type == "string" and test("^([0-9a-f]{40}|[0-9a-f]{64})$"))' "$payload" >/dev/null ||
 	die "invalid cs/1 payload: $payload"
 	entries=$(jq -c '.chunks[]' "$payload" | while read -r chunk
 	do
-		id=$(echo "$chunk" | jq -r .id)
-		blob=$(echo "$chunk" | jq -cS . | git hash-object -w --stdin)
-		old=${tip:+$(git rev-parse -q --verify $tip:chunks/$id.json)}
-		test "${old:-$blob}" = $blob || die "identity conflict: $id"
+		id=$(printf '%s\n' "$chunk" | jq -r .id)
+		blob=$(printf '%s\n' "$chunk" | jq -cS . | git hash-object -w --stdin)
+		for p in $tip $merge
+		do
+			old=$(git rev-parse -q --verify $p:chunks/$id.json)
+			test "${old:-$blob}" = $blob || die "identity conflict: $id"
+		done
 		printf '100644 blob %s\t%s.json\n' "$blob" "$id"
 	done) &&
 	tree=$(printf %s "$entries" | git mktree) &&
@@ -63,6 +78,7 @@ checkpoint () {
 cmd_commit () {
 	branch=$1 payload=$2 expect=$4
 	test -n "$payload" || usage
+	case "$3" in ""|--expect) ;; *) usage ;; esac
 	tip=$(git rev-parse -q --verify "$(ref "$branch")")
 	commit=$(checkpoint) || exit
 	git update-ref --create-reflog "$(ref "$branch")" $commit "${expect:-$tip}" || die "STALE_TIP"
@@ -70,13 +86,15 @@ cmd_commit () {
 }
 
 cmd_show () {
-	rev=$(git rev-parse --verify "$1^{commit}") || exit
-	git ls-tree --name-only $rev chunks/ |
-	while read -r path
-	do
-		git cat-file blob $rev:$path
-	done |
-	jq -cs --argjson ctx "$(git cat-file blob $rev:context.json)" '$ctx + {chunks: .}'
+	rev=$(rev "$1") || exit
+	{
+		git cat-file blob $rev:context.json &&
+		git ls-tree --name-only $rev chunks/ |
+		while read -r path
+		do
+			git cat-file blob $rev:$path
+		done
+	} | jq -cs '.[0] + {chunks: .[1:]}'
 }
 
 cmd_log () {
@@ -84,7 +102,8 @@ cmd_log () {
 }
 
 cmd_diff () {
-	jq -rn --argjson a "$(cmd_show "$1")" --argjson b "$(cmd_show "$2")" '
+	cmd_show "$1" >"$tmp.a" && cmd_show "$2" >"$tmp.b" &&
+	jq -rn --slurpfile a "$tmp.a" --slurpfile b "$tmp.b" '$a[0] as $a | $b[0] as $b |
 		($a.active - $b.active | map("- " + .)[]),
 		($b.active - $a.active | map("+ " + .)[]),
 		if ($a.active - ($a.active - $b.active)) != ($b.active - ($b.active - $a.active))
@@ -92,10 +111,9 @@ cmd_diff () {
 }
 
 cmd_branch () {
-	start=$2
+	start=$(rev "$2") || exit
 	test "$3" != --through || {
-		tip=$(git rev-parse --verify "$2^{commit}") || exit
-		merge= msg="cs derived view: prefix through $4" payload="$GIT_DIR/CS_DERIVED"
+		tip=$start merge= msg="cs derived view: prefix through $4" payload="$tmp.derived"
 		cmd_show $tip | jq -c --arg m "$4" '
 			(.active | indices($m)[0] // error("not active: \($m)")) as $i |
 			.active |= .[:$i + 1] | .active as $a | .chunks |= map(select(.id | IN($a[])))' >"$payload" &&
@@ -111,8 +129,10 @@ cmd_switch () {
 }
 
 cmd_reset () {
-	git update-ref --create-reflog refs/cs/recovery/"$1" "$(ref "$1")" &&
-	git update-ref --create-reflog "$(ref "$1")" "$2"
+	old=$(git rev-parse --verify "$(ref "$1")") &&
+	new=$(rev "$2") || exit
+	git update-ref --create-reflog refs/cs/recovery/"$1" $old &&
+	git update-ref --create-reflog "$(ref "$1")" $new $old
 }
 
 cmd_reflog () {
@@ -120,7 +140,8 @@ cmd_reflog () {
 }
 
 cmd_tag () {
-	git update-ref refs/cs/tags/"$1" "$(git rev-parse --verify "$2^{commit}")" ""
+	c=$(rev "$2") &&
+	git update-ref refs/cs/tags/"$1" $c ""
 }
 
 cmd_label () {
@@ -128,7 +149,7 @@ cmd_label () {
 	shift 2
 	for c in "$@"
 	do
-		c=$(git rev-parse --verify "$c^{commit}") || exit
+		c=$(rev "$c") || exit
 		case "$op" in
 		add) git update-ref refs/cs/labels/$name/$c $c ;;
 		remove) git update-ref -d refs/cs/labels/$name/$c ;;
@@ -154,7 +175,7 @@ until(.left == [];
 '
 
 # Apply the change $from -> $to on top of $cur; removals must still be present.
-replay='
+replay='$cur[0] as $cur | $from[0] as $from | $to[0] as $to |
 ($from.active - $to.active) as $rm | ($to.active - $from.active) as $add |
 if all($rm[]; IN($cur.active[])) then . else error("replay conflict: removed chunk missing") end |
 union($cur; $to | .active |= map(select(IN($cur.active[], $add[])))) | .active -= $rm |
@@ -163,14 +184,15 @@ union($cur; $to | .active |= map(select(IN($cur.active[], $add[])))) | .active -
 
 # Print a new checkpoint on $1 that repeats the change from $2 to $3.
 replay () {
-	tip=$1 merge= payload="$GIT_DIR/CS_REPLAY"
-	jq -n --argjson cur "$(cmd_show $1)" --argjson from "$(cmd_show $2)" --argjson to "$(cmd_show $3)" \
+	tip=$1 merge= payload="$tmp.replay"
+	cmd_show $1 >"$tmp.cur" && cmd_show $2 >"$tmp.from" && cmd_show $3 >"$tmp.to" &&
+	jq -n --slurpfile cur "$tmp.cur" --slurpfile from "$tmp.from" --slurpfile to "$tmp.to" \
 		"$union $replay" >"$payload" && checkpoint
 }
 
 cmd_rebase () {
 	old=$(git rev-parse --verify "$(ref "$1")") &&
-	new=$(git rev-parse --verify "$2^{commit}") || exit
+	new=$(rev "$2") || exit
 	test -z "$(git rev-list --min-parents=2 $new..$old)" || die "cannot replay merge checkpoints"
 	for c in $(git rev-list --reverse $new..$old)
 	do
@@ -196,13 +218,14 @@ cmd_revert () {
 }
 
 cmd_merge_preview () {
-	jq -cn --argjson a "$(cmd_show "$1")" --argjson b "$(cmd_show "$2")" "$union union(\$a; \$b)"
+	cmd_show "$1" >"$tmp.a" && cmd_show "$2" >"$tmp.b" &&
+	jq -cn --slurpfile a "$tmp.a" --slurpfile b "$tmp.b" "$union union(\$a[0]; \$b[0])"
 }
 
 cmd_merge () {
 	branch=$1 result= noff=
 	ours=$(git rev-parse --verify "$(ref "$branch")") &&
-	theirs=$(git rev-parse --verify "$2^{commit}") || exit
+	theirs=$(rev "$2") || exit
 	shift 2
 	while test $# -gt 0
 	do
@@ -216,15 +239,17 @@ cmd_merge () {
 	git merge-base --is-ancestor $theirs $ours && return
 	if git merge-base --is-ancestor $ours $theirs
 	then
-		test -n "$noff" || {
+		test -n "$noff$result" || {
 			git update-ref --create-reflog "$(ref "$branch")" $theirs $ours && echo $theirs
 			return
 		}
-		result="$GIT_DIR/CS_MERGE"
-		cmd_show $theirs >"$result" || exit
+		test -n "$result" || {
+			result="$tmp.merge"
+			cmd_show $theirs >"$result" || exit
+		}
 	fi
 	test -n "$result" || {
-		result="$GIT_DIR/CS_MERGE"
+		result="$tmp.merge"
 		cmd_merge_preview $ours $theirs >"$result" || exit
 	}
 	merge=$theirs cmd_commit "$branch" "$result" --expect $ours
@@ -233,7 +258,7 @@ cmd_merge () {
 cmd_pin () {
 	for c in "$@"
 	do
-		c=$(git rev-parse --verify "$c^{commit}") &&
+		c=$(rev "$c") &&
 		git update-ref refs/cs/pins/$c $c || exit
 	done
 }
@@ -246,8 +271,7 @@ cmd_unpin () {
 }
 
 cmd_commit_code () {
-	ctx=$(git rev-parse --verify "$2^{commit}") &&
-	git cat-file -e $ctx:context.json || die "not a cs checkpoint: $2"
+	ctx=$(rev "$2") || exit
 	shift 2
 	test "$1" = -- && shift
 	cmd_pin $ctx &&
@@ -260,7 +284,7 @@ cmd_install_hook () {
 	mkdir -p "${hook%/*}" &&
 	cat >"$hook" <<-\EOF &&
 	#!/bin/sh
-	test "$(git interpret-trailers --parse "$1" | grep -c "^Context-Shadow: ")" = 1 ||
+	test "$(git interpret-trailers --parse "$1" | grep -ic "^Context-Shadow: ")" = 1 ||
 	{ echo >&2 "commit must link exactly one cs checkpoint, use git cs commit-code"; exit 1; }
 	EOF
 	chmod +x "$hook"
@@ -291,7 +315,8 @@ cmd_links () {
 	--context)
 		ctx=$(git rev-parse --verify "$2^{commit}") || exit
 		shift 2
-		git log --format=%H --grep="^Context-Shadow: $ctx$" "${@:---branches}" ;;
+		git log --format='%H %(trailers:key=Context-Shadow,valueonly,separator=%x20)' "${@:---branches}" |
+		awk -v ctx=$ctx '{ for (i = 2; i <= NF; i++) if ($i == ctx) print $1 }' ;;
 	*)
 		usage ;;
 	esac
@@ -329,8 +354,8 @@ cherry-pick|revert|pin|unpin|commit-code|install-hook|fsck|links|push|fetch|bund
 esac
 fn=cmd_$(echo "$cmd" | tr - _)
 test -n "$json" || { $fn "$@"; exit; }
-out=$($fn "$@" 2>"$GIT_DIR/CS_ERR")
+out=$($fn "$@" 2>"$tmp.err")
 status=$?
-jq -n --arg out "$out" --rawfile err "$GIT_DIR/CS_ERR" --argjson status $status \
+jq -n --arg out "$out" --rawfile err "$tmp.err" --argjson status $status \
 	'{ok: ($status == 0), output: $out, error: ($err | rtrimstr("\n"))}'
 exit $status

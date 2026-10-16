@@ -56,6 +56,36 @@ test_expect_success 'commit rejects malformed payloads' '
 	test_must_fail git cs commit main changed.json
 '
 
+test_expect_success 'commit rejects duplicate or unsafe chunk IDs and loose sources' '
+	echo "{\"schema\":\"cs/1\",\"active\":[\"m1\"],\"chunks\":[{\"id\":\"m1\"},{\"id\":\"m1\",\"body\":\"x\"}]}" >twice.json &&
+	echo "{\"schema\":\"cs/1\",\"active\":[\"../m\"],\"chunks\":[{\"id\":\"../m\"}]}" >slash.json &&
+	echo "{\"schema\":\"cs/1\",\"active\":[\"s\"],\"chunks\":[{\"id\":\"s\",\"sources\":[\"HEAD\"]}]}" >loose.json &&
+	test_must_fail git cs commit other twice.json &&
+	test_must_fail git cs commit other slash.json &&
+	test_must_fail git cs commit other loose.json
+'
+
+test_expect_success 'commands refuse code commits as checkpoints' '
+	old=$(git rev-parse refs/cs/heads/main) &&
+	test_must_fail git cs reset main HEAD &&
+	test_must_fail git cs branch other HEAD &&
+	test_must_fail git cs tag other HEAD &&
+	test_must_fail git cs pin HEAD &&
+	test_must_fail git cs merge main HEAD &&
+	test_must_fail git cs commit-code --context HEAD -- --allow-empty -m nope &&
+	test "$(git rev-parse refs/cs/heads/main)" = $old
+'
+
+test_expect_success 'chunk bytes survive escapes unchanged' '
+	cat >esc.json <<-\EOF &&
+	{"schema":"cs/1","active":["e"],"chunks":[{"id":"e","body":"a\nb \\t \\n"}]}
+	EOF
+	e=$(git cs commit esc esc.json) &&
+	jq -cS .chunks esc.json >expect &&
+	git cs show $e | jq -cS .chunks >actual &&
+	test_cmp expect actual
+'
+
 test_expect_success 'show round-trips through commit' '
 	git cs show $base >out.json &&
 	again=$(git cs commit main out.json) &&
@@ -138,6 +168,16 @@ test_expect_success 'merge fast-forwards unless --no-ff' '
 	git rev-parse refs/cs/heads/noff^2
 '
 
+test_expect_success 'merge --result is recorded even when it could fast-forward' '
+	git cs branch r1 $base &&
+	git cs branch r2 $base &&
+	ctx r2 "[\"m1\",\"m2\",\"b1\"]" &&
+	payload "[\"b1\"]" r.json &&
+	git cs merge r1 refs/cs/heads/r2 --result r.json &&
+	test "$(active refs/cs/heads/r1)" = "[\"b1\"]" &&
+	git rev-parse refs/cs/heads/r1^2
+'
+
 test_expect_success 'merge accepts a supplied result' '
 	git cs branch c $base &&
 	ctx c "[\"m1\",\"b1\"]" &&
@@ -203,6 +243,9 @@ test_expect_success 'commit-code links and pins the context' '
 	git cs commit-code --context $base -- -m linked &&
 	test "$(git cs links --code HEAD)" = $base &&
 	test "$(git cs links --context $base)" = "$(git rev-parse HEAD)" &&
+	quoted=$(git commit-tree HEAD^{tree} -m quote -m "Context-Shadow: $base
+	inside a paragraph" -m end) &&
+	test -z "$(git cs links --context $base $quoted)" &&
 	git rev-parse refs/cs/pins/$base &&
 	test_must_fail git cs commit-code --context HEAD -- -m nope
 '

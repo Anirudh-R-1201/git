@@ -29,9 +29,9 @@ Start every message you record with `{{NAME}}: `. Kinds: `plan`, `learning`,
 | Create your context branch | `git cs branch {{NAME}} main` |
 | Record a message | `git cs commit {{NAME}} -m "{{NAME}}: ..." --kind learning` |
 | Publish to the team | `git cs merge main {{NAME}} --retry 10` (stderr says `Fast-forward`, `Merge checkpoint` or `Already up to date`; exit 75 means it still lost a race) |
-| Pull teammates' learnings | `git cs rebase {{NAME}} main`, then `git cs show {{NAME}} --messages` |
+| Pull teammates' learnings | `git cs rebase {{NAME}} main`, then `git cs context {{NAME}}` |
 | Wait for teammates | `cs-wait {{NAME}} <agent>...` (rebases until each named agent has published a learning, then prints the context) |
-| Commit code linked to your context | record the relevant message first, then `git add <files>; git cs commit-code --context {{NAME}} -- -m "message"` |
+| Commit code linked to your context | record the relevant message first, then `git add <files>; git cs commit-code --context {{NAME}} -- -m "message"` (plain `git commit` is refused: every code commit must name its context) |
 | Inspect | `git cs log {{NAME}}`, `git cs links --code HEAD` |
 
 {{TASK}}

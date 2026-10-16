@@ -4,7 +4,8 @@
 and learnings, in a commit history kept apart from code, with explicit links
 from code commits to the exact context that produced them. The behaviour it
 must have is defined by the design document in this directory,
-[ContextShadow_Design.tex](ContextShadow_Design.tex) (v0.1).
+[ContextShadow_Design.tex](ContextShadow_Design.tex) (v0.1), with the
+decisions recorded in [DESIGN-NOTES.md](DESIGN-NOTES.md).
 
 Latest results, including a table of every primitive: [RESULTS.md](RESULTS.md).
 
@@ -12,7 +13,7 @@ There are three layers of tests:
 
 | Layer | Where | What it proves |
 |---|---|---|
-| Unit | `t/t9905-cs.sh` | Every command and error path, inside git's own test harness |
+| Unit | `t/t9905-cs.sh`, `t/t7529-commit-context.sh` | Every `git cs` command and the native `context` field of commits, inside git's own test harness |
 | Per command | [cmdtable.sh](cmdtable.sh) | One concrete example per command against a sample project, expected vs received |
 | Parallel agents | [agents/](agents/) | Several agents share learnings through `git cs` while coding in parallel |
 
@@ -22,12 +23,10 @@ All of them need the extension built first, from the repository root:
 make
 ```
 
-`git cs` requires `jq`.
-
 ## Unit tests
 
 ```bash
-cd t && ./t9905-cs.sh
+cd t && ./t9905-cs.sh && ./t7529-commit-context.sh
 ```
 
 These also run with the rest of git's suite. Related git suites worth
@@ -54,11 +53,13 @@ The script prints `PASS` or `FAIL` per row, writes the full table to
 | `CS_GIT_BIN` | `bin-wrappers/` of this checkout | Directory holding the `git` to test |
 | `CS_SANDBOX` | a new `mktemp -d` directory | Where the sample repositories are created |
 
-Coverage: every command and option, error paths (stale tip, invalid payload,
-identity and order conflicts, code commits used as checkpoints), plain-text
-messages (`commit -m`, `show --messages`), concurrency (eight writers from one
-tip, eight parallel publishers with and without `--retry`), retention after
-`git gc`, and transfer by push, fetch and bundle.
+Coverage: every command and option, error paths (stale tip, bad kinds,
+missing code commits, empty messages, code commits used as checkpoints), the
+native `context` field (`git commit --context`, amend, `commit.requireContext`,
+`git cherry-pick` and `git rebase` keeping it), concurrency (eight writers from
+one tip, eight parallel publishers with and without `--retry`), retention after
+`git gc`, transfer by push, fetch and bundle, and the absence of any JSON or
+`jq`.
 
 ## Parallel agents sharing learnings
 

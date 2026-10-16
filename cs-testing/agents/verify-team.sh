@@ -6,12 +6,12 @@ SB=${1:?usage: verify-team.sh <sandbox>}
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 export PATH="${CS_GIT_BIN:-$ROOT/bin-wrappers}:$PATH"
 cd "$SB/team" && base=$(git rev-parse HEAD)
-echo "team context: $(git cs show main | jq '.active | length') chunks," \
+echo "team context: $(git cs log main | grep -vc ' merge: ') messages," \
 	"$(git rev-list refs/cs/heads/main | wc -l | tr -d ' ') checkpoints," \
 	"$(git rev-list --merges refs/cs/heads/main | wc -l | tr -d ' ') merges"
 for a in alpha beta gamma
 do
-	echo "$a: $(git cs show main --messages | grep -c " $a: ") messages on main," \
+	echo "$a: $(git cs log main | grep -c " [a-z-]*: $a:") messages on main," \
 		"$(git rev-list --count main..agent-$a) code commits," \
 		"fsck $(git cs fsck main..agent-$a >/dev/null 2>&1 && echo clean || echo FAILED)"
 done

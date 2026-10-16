@@ -1,54 +1,42 @@
 # `git cs` test results
 
-Run on 2026-10-16 against the `kaizen` branch at `dbb884dde7`, built with
+Run on 2026-10-16 against the `kaizen` branch at `f3cea8c784`, built with
 `make` and used through `bin-wrappers/`. Rerun with the commands in
-[README.md](README.md).
+[README.md](README.md). Design decisions are in [DESIGN-NOTES.md](DESIGN-NOTES.md).
 
 ## Summary
 
 | Suite | Result |
 |---|---|
-| `t/t9905-cs.sh` | 36/36 (five consecutive runs) |
-| `t/t0012-help.sh` | 181/181 |
-| `t/t7500-commit-template-squash-signoff.sh` | 57/57 |
-| `t/t7513-interpret-trailers.sh` | 100/100 |
-| `cs-testing/cmdtable.sh` | 52/52 |
-| Parallel agents (`cs-testing/agents/`) | 9/9 messages shared, all links pinned, merged code tests OK, fresh clone 6/6 links |
+| `t/t9905-cs.sh` | 23/23 (four consecutive runs) |
+| `t/t7529-commit-context.sh` | 16/16 |
+| `cs-testing/cmdtable.sh` | 45/45 |
+| Parallel agents (`cs-testing/agents/`) | 9/9 messages shared, every code commit linked, merged code tests OK, fresh clone 6/6 links |
+| Existing git suites touched by the change | help 181, doc-vs-help 847, fsck 97, rebase 40 + 135 + 31, cherry-pick/revert 21 + 44 + 54, commit 57 + 77 + 82, trailers 100: all pass |
 
 ## Primitives
 
 | Primitive | What it does | How it does it |
 |---|---|---|
-| `commit <branch> -m <msg> [--kind k]` | Records a plain message as new context | Reads the tip, appends the message as a chunk with a generated ID, writes a checkpoint, then moves the branch only if it did not move meanwhile |
-| `commit <branch> <payload>` | Records a full context from a JSON payload | Validates schema, unique IDs and that an ID never changes bytes; stores chunks as blobs plus `context.json`; `commit-tree` and a conditional `update-ref` |
-| `commit … --expect <ckpt>` | Refuses to overwrite a newer tip | Conditional `update-ref`; on mismatch prints only `STALE_TIP` and exits 75 |
-| `show <ckpt> [--messages]` | Prints a checkpoint as a payload or as plain messages | Reads `context.json` and chunk blobs from the tree; `--messages` prints `<id> <kind>: <body>` in active order |
-| `log <branch>` | History with subjects, merges and changed chunks | `git log` over the branch, each checkpoint diffed against its first parent |
-| `diff <a> <b>` | What changed between two views | Compares active lists: `-` dropped, `+` added, `~ reordered` |
-| `branch <name> <ckpt> [--through <id>]` | Starts a branch at any checkpoint or a cut inside one | Creates the ref only if absent; `--through` commits the prefix as a marked derived view |
-| `switch [-c] <ws> <branch>` | Gives each workspace its own branch | Symbolic ref `refs/cs/workspaces/<ws>`, used as `@<ws>` |
-| `reset <branch> <ckpt>` | Moves a branch without losing the old tip | Saves `refs/cs/recovery/<branch>`, then a conditional move |
-| `reflog <branch>` | Every tip a branch has had | Reflogs are created for all context and recovery refs |
-| `tag <name> <ckpt>` | Names one checkpoint permanently | `refs/cs/tags/<name>`, never moved |
-| `label add/remove/resolve` | Groups exact checkpoints | One ref per member under `refs/cs/labels/<name>/` |
-| `merge <branch> <ckpt>` | Combines two histories | Fast-forward, or ordered union (shared IDs once, each side's order kept, ties by ID, conflicts refused) in a two-parent checkpoint; stderr says `Fast-forward`, `Merge checkpoint` or `Already up to date` |
-| `merge --result <payload>` / `--no-ff` | Supplied result, or a forced merge checkpoint | Always records a two-parent checkpoint |
-| `merge --retry <n>` | Lets parallel publishers all land | Recomputes after a lost race with per-process jittered backoff |
-| `merge-preview <a> <b>` | Shows a union without moving refs | Same computation; output is a valid `--result` |
-| `rebase <branch> <onto>` | Pulls teammates' context into your branch | Replays each checkpoint's additions and removals; removals must still apply; merges refused; old tip kept |
-| `cherry-pick` / `revert <branch> <ckpt>` | Applies one change or its inverse | Replays parent→checkpoint or the reverse |
-| `pin` / `unpin <ckpt>` | Keeps context safe from GC | `refs/cs/pins/<id>`; summary sources pinned automatically |
-| `commit-code --context <ckpt> -- <args>` | Code commit that records the exact context | Pins, then `git commit` with exactly one `Context-Shadow:` trailer |
-| `links --code <c>` / `--context <ckpt>` | Context behind a commit, or commits using a context | Reads the trailer; reverse scans code refs |
-| `install-hook` | Blocks unlinked code commits | `commit-msg` hook requiring one trailer |
-| `fsck [<revs>]` | Finds broken retention or links | Every `refs/cs/` ref is a checkpoint; each code commit has one pinned link |
-| `push <remote> [<code refspecs>]` | Publishes code and context together | One `git push --atomic` |
-| `fetch <remote>` | Receives context without merging | Branches into `refs/cs/remotes/<remote>/`; pins, tags, labels as is |
-| `bundle <file> [<code refs>]` | Offline transfer | `git bundle create` of context refs plus code refs |
-| `--json <command>` | Machine-readable result | `{ok, output, note \| error}`, exit status unchanged |
-
-Any _checkpoint_ argument also accepts a context branch name or
-`@<workspace>`; a context branch wins over a code ref with the same name.
+| `git commit --context <ckpt>` | Records which checkpoint a code commit was made from | Writes a `context <id>` header into the commit object; `--amend` keeps it unless replaced |
+| `git commit-tree --context <ckpt>` | Same, for plumbing | Same header through `commit_tree_extended` |
+| `commit.requireContext` | Makes the code-to-context link mandatory | `git commit` refuses a commit without a `context` header |
+| `git cherry-pick` / `git rebase` | Keep each replayed commit's link | The sequencer copies the picked commit's header; a hand-resolved conflict inherits it from `CHERRY_PICK_HEAD` or `REBASE_HEAD`; `git revert` does not copy it |
+| `git cs init` | Turns the requirement on | Sets `commit.requireContext=true` |
+| `git cs commit <branch> -m <msg> [--kind k] [--code c]` | Records one message as a checkpoint | Writes a `message` blob (`kind:`, optional `code:`, blank line, body) in a one-file tree; `commit-tree` on the tip; conditional `update-ref` (`STALE_TIP`, exit 75, on a lost race) |
+| `git cs show <ckpt>` | Prints one typed message | `cat-file` of the `message` blob |
+| `git cs context <ckpt>` | The full context at a point | Ancestors oldest first; merges, retractions and retracted messages left out |
+| `git cs log <ckpt>` / `diff <a> <b>` | History, or what each side has | `git log` over checkpoints whose subjects are `<kind>: <first line>` |
+| `git cs branch` / `switch` / `reset` / `reflog` | Branch anywhere, per-workspace selection, safe moves | Refs under `refs/cs/heads/`, symbolic refs under `refs/cs/workspaces/`, recovery refs and reflogs |
+| `git cs tag` / `label` | Name one checkpoint, or group many | `refs/cs/tags/`, `refs/cs/labels/<name>/<id>` |
+| `git cs merge [--no-ff] [-m] [--retry n]` | Combines histories | Fast-forward, or a two-parent checkpoint of kind `merge`; never conflicts; retries lost races with jittered backoff |
+| `git cs rebase` / `cherry-pick` | Pull teammates' context into a branch | Copies each message onto the new base; never conflicts; merges refused |
+| `git cs revert` | Hides a message | Records a `retract` checkpoint with `retracts: <id>` |
+| `git cs pin` / `unpin` | Keeps context safe from GC | `refs/cs/pins/<id>` |
+| `git cs commit-code --context <ckpt>` | Linked code commit in one step | Pins, then `git commit --context` |
+| `git cs links --code` / `--context` | Follow a link either way | Reads the header; the reverse scans code refs |
+| `git cs fsck [<revs>]` | Finds broken links | Every `refs/cs/` ref is a checkpoint with a valid `code` field; each code commit has exactly one pinned `context` header |
+| `git cs push` / `fetch` / `bundle` | Transfer | Atomic push of context and code refs; fetch into `refs/cs/remotes/`; bundles |
 
 ## Per-command results
 
@@ -56,73 +44,66 @@ Generated by `cs-testing/cmdtable.sh`.
 
 | cmd | testing example done | expected outcome | received outcome | result |
 |---|---|---|---|---|
-| commit | `git cs commit main base.json` | id=yes code_head_moved=no worktree_clean=yes | id=yes code_head_moved=no worktree_clean=yes | PASS |
-| commit --expect (stale) | `git cs commit main base.json --expect <old tip>` | exit=75 stderr=STALE_TIP tip_unchanged=yes | exit=75 stderr=STALE_TIP tip_unchanged=yes | PASS |
-| commit (invalid payload) | `git cs commit main dup.json  (chunk id m1 twice)` | exit=1 stderr=invalid cs/1 payload: dup.json | exit=1 stderr=invalid cs/1 payload: dup.json | PASS |
-| commit (identity conflict) | `git cs commit main changed.json  (m1 with new bytes)` | exit=1 stderr=identity conflict: m1 | exit=1 stderr=identity conflict: m1 | PASS |
-| commit (escaped bytes) | `git cs commit esc esc.json  (body with \n and \\)` | bytes_equal=yes | bytes_equal=yes | PASS |
-| commit -m | `git cs commit notes -m 'Investigate SQLite'; git cs commit notes -m 'Use WAL mode' --kind learning` | chunks=2 kinds=message,learning subject=Use WAL mode | chunks=2 kinds=message,learning subject=Use WAL mode | PASS |
-| show --messages | `git cs show notes --messages` | <id> message: Investigate SQLite <id> learning: Use WAL mode | <id> message: Investigate SQLite <id> learning: Use WAL mode | PASS |
-| --json (success) | `git cs --json commit main base.json` | {"ok":true,"id":true} | {"ok":true,"id":true} | PASS |
-| --json (failure) | `git cs --json commit main base.json --expect <old tip>` | {"ok":false,"error":"STALE_TIP"} | {"ok":false,"error":"STALE_TIP"} | PASS |
-| show | `git cs show <base>` | {"active":["m1","m2"],"chunks":4} | {"active":["m1","m2"],"chunks":4} | PASS |
-| show (round-trip) | `git cs show <base> > rt.json; git cs commit rt rt.json` | same_tree=yes | same_tree=yes | PASS |
+| commit -m | `git cs commit main -m 'Investigate SQLite'` | tree=message code_head_moved=no worktree_clean=yes | tree=message code_head_moved=no worktree_clean=yes | PASS |
+| show | `git cs show main` | kind: message  Investigate SQLite | kind: message  Investigate SQLite | PASS |
+| commit --kind --code | `git cs commit main -m 'Use WAL mode' --kind learning --code HEAD` | kind=learning code=HEAD subject=learning: Use WAL mode | kind=learning code=HEAD subject=learning: Use WAL mode | PASS |
+| commit -F (escapes) | `git cs commit esc -F msg  (body with \n and \\)` | bytes_equal=yes | bytes_equal=yes | PASS |
+| commit --expect (stale) | `git cs commit main -m late --expect <old tip>` | exit=75 stderr=STALE_TIP tip_unchanged=yes | exit=75 stderr=STALE_TIP tip_unchanged=yes | PASS |
+| commit (invalid input) | `bad kind / --code nope / empty message` | bad_kind=refused bad_code=refused empty=refused | bad_kind=refused bad_code=refused empty=refused | PASS |
+| context | `git cs context main` | message: Investigate SQLite|learning: Use WAL mode|message: newer | message: Investigate SQLite|learning: Use WAL mode|message: newer | PASS |
+| log | `git cs log main` | 3 lines, newest=message: newer | 3 lines, newest=message: newer | PASS |
 | show (bare name) | `git cs show main  (code branch main also exists)` | resolves_to=context | resolves_to=context | PASS |
-| log | `git cs log logb` | <id> <date> cs checkpoint | + a1 | <id> <date> cs checkpoint | + m1 | + m2 | <id> <date> cs checkpoint | + a1 | <id> <date> cs checkpoint | + m1 | + m2 | PASS |
-| diff | `git cs diff <base> <swap>  (swap = m2,m1,a1)` | + a1 ~ reordered | + a1 ~ reordered | PASS |
-| branch | `git cs branch agent-a <base>` | created_at_base=yes | created_at_base=yes | PASS |
-| branch (exists) | `git cs branch agent-a <base> again` | refused=yes | refused=yes | PASS |
-| merge (union) | `git cs merge union agent-b` | active=["m1","m2","a1","b1"] parents=2 stderr=Merge checkpoint | active=["m1","m2","a1","b1"] parents=2 stderr=Merge checkpoint | PASS |
+| diff | `git cs diff <base> main` | + message: newer + learning: Use WAL mode | + message: newer + learning: Use WAL mode | PASS |
+| branch | `git cs branch agent-a <base>; again` | created_at_base=yes second=refused | created_at_base=yes second=refused | PASS |
+| switch | `git cs switch -c w1 wb <base>; git cs commit @w1 -m hi` | workspace=refs/cs/heads/wb context=message: Investigate SQLite|message: hi | workspace=refs/cs/heads/wb context=message: Investigate SQLite|message: hi | PASS |
+| reset | `git cs reset wb <base>` | tip=base recovery=old_tip | tip=base recovery=old_tip | PASS |
+| reset (code commit) | `git cs reset wb HEAD` | refused=yes stderr=not a cs checkpoint: HEAD | refused=yes stderr=not a cs checkpoint: HEAD | PASS |
+| reflog | `git cs reflog wb` | entries=3 | entries=3 | PASS |
+| tag | `git cs tag v1 main; git cs tag v1 <base>` | created=yes move_refused=yes | created=yes move_refused=yes | PASS |
+| label | `git cs label add sprint <base> main; remove sprint <base>` | after_add=2 after_remove=1 | after_add=2 after_remove=1 | PASS |
 | merge (fast-forward) | `git cs merge ff agent-a` | stderr=Fast-forward tip=agent-a | stderr=Fast-forward tip=agent-a | PASS |
 | merge (up to date) | `git cs merge ff <base>` | stderr=Already up to date printed=current_tip | stderr=Already up to date printed=current_tip | PASS |
-| merge --no-ff | `git cs merge noff agent-a --no-ff` | parents=2 active=["m1","m2","a1"] stderr=Merge checkpoint | parents=2 active=["m1","m2","a1"] stderr=Merge checkpoint | PASS |
-| merge --result | `git cs merge res agent-b --result result.json` | active=["a1"] parents=2 | active=["a1"] parents=2 | PASS |
-| merge (order conflict) | `git cs merge agent-a swap  (m1,m2 vs m2,m1)` | refused=yes msg=order conflict tip_unchanged=yes | refused=yes msg=order conflict tip_unchanged=yes | PASS |
-| merge (identity conflict) | `git cs merge agent-a rootb  (unrelated m1 bytes)` | refused=yes msg=identity conflict: m1 | refused=yes msg=identity conflict: m1 | PASS |
-| merge-preview | `git cs merge-preview agent-a agent-b` | active=["m1","m2","a1","b1"] refs_moved=no | active=["m1","m2","a1","b1"] refs_moved=no | PASS |
+| merge (checkpoint) | `git cs merge agent-a agent-b` | stderr=Merge checkpoint kind=merge parents=2 context=message: Investigate SQLite|message: from a|message: from b | stderr=Merge checkpoint kind=merge parents=2 context=message: Investigate SQLite|message: from a|message: from b | PASS |
+| merge --no-ff -m | `git cs merge noff agent-b --no-ff -m 'take b'` | parents=2 body=take b | parents=2 body=take b | PASS |
 | merge (8 parallel, no --retry) | `8x: git cs merge s0 q0-N &` | landed=1/8 exit75=7 | landed=1/8 exit75=7 | PASS |
 | merge --retry (8 parallel) | `8x: git cs merge s20 q20-N --retry 20 &` | landed=8/8 exit0=8 | landed=8/8 exit0=8 | PASS |
-| commit (8 parallel, same tip) | `8x: git cs commit race rN.json --expect <tip> &` | succeeded=1 exit75=7 | succeeded=1 exit75=7 | PASS |
-| rebase | `git cs rebase topic agent-b` | active=["m1","m2","a1","b1"] on_agent-b=yes recovery=old_tip | active=["m1","m2","a1","b1"] on_agent-b=yes recovery=old_tip | PASS |
-| rebase (conflict) | `git cs rebase dropper up  (both removed m2)` | refused=yes msg=replay conflict tip_unchanged=yes | refused=yes msg=replay conflict tip_unchanged=yes | PASS |
-| rebase (merge checkpoints) | `git cs rebase union <base>` | refused=yes msg=cannot replay merge checkpoints | refused=yes msg=cannot replay merge checkpoints | PASS |
-| cherry-pick | `git cs cherry-pick pick agent-b` | active=["m1","m2","b1"] | active=["m1","m2","b1"] | PASS |
-| revert | `git cs revert pick pick` | active=["m1","m2"] | active=["m1","m2"] | PASS |
-| reset | `git cs reset agent-a <base>` | tip=base recovery=old_tip | tip=base recovery=old_tip | PASS |
-| reset (code commit) | `git cs reset agent-a HEAD` | refused=yes stderr=not a cs checkpoint: HEAD | refused=yes stderr=not a cs checkpoint: HEAD | PASS |
-| reflog | `git cs reflog agent-a` | entries=3 | entries=3 | PASS |
-| branch --through | `git cs branch cut union --through m2` | active=["m1","m2"] subject=cs derived view: prefix through m2 | active=["m1","m2"] subject=cs derived view: prefix through m2 | PASS |
-| switch | `git cs switch -c w1 wb <base>; git cs commit @w1 a.json` | workspace=refs/cs/heads/wb wb_active=["m1","m2","a1"] | workspace=refs/cs/heads/wb wb_active=["m1","m2","a1"] | PASS |
-| tag | `git cs tag v1 union; git cs tag v1 agent-b` | created=yes move_refused=yes | created=yes move_refused=yes | PASS |
-| label | `git cs label add sprint agent-b union; remove sprint union` | after_add=2 after_remove=1 | after_add=2 after_remove=1 | PASS |
-| pin / unpin | `git cs pin agent-b; git cs unpin agent-b` | pinned=yes unpinned=yes | pinned=yes unpinned=yes | PASS |
-| commit-code | `git cs commit-code --context union -- -m 'Add g'` | link=union pinned=yes trailers=1 | link=union pinned=yes trailers=1 | PASS |
-| commit-code (amend relink) | `git cs commit-code --context agent-b -- --amend --no-edit` | link=agent-b trailers=1 | link=agent-b trailers=1 | PASS |
-| links --code | `git cs links --code HEAD` | union | union | PASS |
-| links --context | `git cs links --context union` | HEAD | HEAD | PASS |
-| fsck | `git cs fsck HEAD~1..HEAD; git cs fsck` | range=clean full=flags_unlinked_code_commit | range=clean full=flags_unlinked_code_commit | PASS |
-| install-hook | `git cs install-hook; git commit -m plain; git cs commit-code ...` | plain=rejected linked=accepted | plain=rejected linked=accepted | PASS |
-| gc survival | `delete branch union; git gc --prune=now; git cs show <union>` | readable=yes | readable=yes | PASS |
+| commit (8 parallel, same tip) | `8x: git cs commit race -m rN --expect <tip> &` | succeeded=1 exit75=7 | succeeded=1 exit75=7 | PASS |
+| rebase | `git cs rebase topic agent-b` | context=message: Investigate SQLite|message: from b|message: t1|message: t2 recovery=old_tip | context=message: Investigate SQLite|message: from b|message: t1|message: t2 recovery=old_tip | PASS |
+| rebase (merge checkpoints) | `git cs rebase agent-a <base>` | refused=yes stderr=cannot replay merge checkpoints | refused=yes stderr=cannot replay merge checkpoints | PASS |
+| cherry-pick | `git cs cherry-pick pick topic` | context=message: Investigate SQLite|message: t2 | context=message: Investigate SQLite|message: t2 | PASS |
+| revert | `git cs revert pick pick` | kind=retract context=message: Investigate SQLite | kind=retract context=message: Investigate SQLite | PASS |
+| pin / unpin | `git cs pin topic; git cs unpin topic` | pinned=yes unpinned=yes | pinned=yes unpinned=yes | PASS |
+| init | `git cs init; git commit -m unlinked` | requireContext=true plain_commit=refused | requireContext=true plain_commit=refused | PASS |
+| commit-code | `git cs commit-code --context main -- -m 'Add x'` | header=main pinned=yes headers=1 | header=main pinned=yes headers=1 | PASS |
+| git commit --amend | `git commit --amend -m reworded` | link_kept=yes | link_kept=yes | PASS |
+| git commit --amend --context | `git commit --amend --context agent-b ...  (via full id)` | header=agent-b headers=1 | header=agent-b headers=1 | PASS |
+| links --code | `git cs links --code HEAD` | main | main | PASS |
+| links --context | `git cs links --context main` | HEAD | HEAD | PASS |
+| git cherry-pick (code) | `git cherry-pick side  (side commit linked to agent-b)` | link=agent-b | link=agent-b | PASS |
+| git rebase (code) | `git rebase main side` | link=agent-b | link=agent-b | PASS |
+| fsck | `git cs fsck ff4bd254ec17b7df5ba6cf6aa5894627fe5a6594..main; git cs fsck` | range=clean full=flags_unlinked_root | range=clean full=flags_unlinked_root | PASS |
+| gc survival | `delete branch main; git gc --prune=now; git cs show <main>` | readable=yes | readable=yes | PASS |
 | push | `git cs push origin main` | pushed=yes remote_has_context=yes | pushed=yes remote_has_context=yes | PASS |
 | push (atomic refusal) | `remote main diverged; git cs push origin main` | refused=yes remote_context_unchanged=yes | refused=yes remote_context_unchanged=yes | PASS |
 | fetch | `git clone hub rx; git cs fetch origin` | links_resolve=yes fsck=clean | links_resolve=yes fsck=clean | PASS |
 | bundle | `git cs bundle ctx.bundle main; fetch into empty repo` | links_resolve=yes | links_resolve=yes | PASS |
+| no JSON | `grep jq in the installed git-cs` | jq_calls=0 | jq_calls=0 | PASS |
 | temp files | `ls .git after all runs` | left=0 | left=0 | PASS |
 
 ## Parallel agents
 
 Three agents (alpha: tokenizer, beta: `top_words` built on alpha's tokenizer,
 gamma: tests written only from the published contracts) ran at the same time
-with [agents/PROMPT.md](agents/PROMPT.md), using only `commit -m`,
-`merge --retry`, `rebase`, `show --messages` and `commit-code`.
+with [agents/PROMPT.md](agents/PROMPT.md) in a repository where `git cs init`
+made the context link mandatory.
 
 | Check | Expected | Received |
 |---|---|---|
-| Messages on the team context | 2 brief + 3 per agent | 11 chunks, 16 checkpoints, 5 merges |
+| Messages on the team context | 2 brief + 3 per agent | 11 messages, 18 checkpoints, 7 merges |
 | Each agent's messages reached `main` | 3 each | alpha 3, beta 3, gamma 3 |
-| Publish outcomes | exit 0, outcome reported | Fast-forward or Merge checkpoint, all exit 0, no errors |
-| Code commits linked and pinned | `fsck` clean per agent | clean for alpha, beta and gamma |
-| Code merged with linked merge commits | clean merge | three automatic merges, `fsck` clean |
+| Publish outcomes | exit 0, outcome reported | Fast-forward or Merge checkpoint, all exit 0, no `git cs` errors |
+| Every code commit names its context | one `context` header each | 3 agent commits and 3 merge commits, one header each |
+| Links pinned | `fsck` clean | clean per agent and for all agent and merge commits |
 | Tests on merged code | pass | OK |
 | Fresh clone after `cs push` / `cs fetch` | every link resolves | 6/6, tests OK |
 
@@ -130,8 +111,8 @@ with [agents/PROMPT.md](agents/PROMPT.md), using only `commit -m`,
 
 | Gap | Seen in | Impact |
 |---|---|---|
-| `log` lists a teammate's chunk at their checkpoint and again at the merge | agents | Cosmetic; matches `git log` walking all parents |
-| `log` shows generated IDs (`+ m1fb…`) rather than message text | agents | Cosmetic; the subject line carries the message |
-| `links` prints a bare ID | agents | Cosmetic |
-| Union cannot retract a chunk one side dropped | design, agents | By v0.1 design; use `merge --result` or rebase |
-| Depends on `jq`; one `jq` call per chunk | review | Portability and speed on large contexts |
+| `log` and `context` interleave teammates' messages and merge entries | agents | Expected for a shared history; filter by the agent prefix |
+| Writing the kind in the message text repeats it in subjects | agents | Cosmetic; the kind is already a field |
+| `links` and `branch` print bare IDs or nothing | agents | Cosmetic |
+| `git merge` creating a merge commit itself does not take `--context` | design | Use `git merge --no-commit`, then `git cs commit-code` or `git commit --context` |
+| The `context` header is not converted between SHA-1 and SHA-256 in repositories using both | review | Only affects hash-interop repositories |

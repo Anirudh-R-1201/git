@@ -147,6 +147,10 @@ struct am_state {
 	int allow_rerere_autoupdate;
 	const char *sign_commit;
 	int rebasing;
+
+	/* the context checkpoint every commit is linked to, from --context */
+	struct object_id context;
+	int has_context;
 };
 
 /**
@@ -443,6 +447,10 @@ static void am_load(struct am_state *state)
 
 	read_state_file(&sb, state, "messageid", 1);
 	state->message_id = !strcmp(sb.buf, "t");
+
+	state->has_context = read_state_file(&sb, state, "context", 1) > 0 && sb.len;
+	if (state->has_context && get_oid_hex(sb.buf, &state->context) < 0)
+		die(_("could not parse %s"), am_path(state, "context"));
 
 	read_state_file(&sb, state, "scissors", 1);
 	if (!strcmp(sb.buf, "t"))
@@ -1043,6 +1051,8 @@ static void am_setup(struct am_state *state, enum patch_format patch_format,
 
 	write_state_text(state, "keep", str);
 	write_state_bool(state, "messageid", state->message_id);
+	write_state_text(state, "context",
+			 state->has_context ? oid_to_hex(&state->context) : "");
 
 	switch (state->scissors) {
 	case SCISSORS_UNSET:
@@ -1669,7 +1679,8 @@ static void do_commit(const struct am_state *state)
 	const struct object_id *old_oid;
 	struct commit_list *parents = NULL;
 	const char *reflog_msg, *author, *committer = NULL;
-	struct strbuf sb = STRBUF_INIT;
+	struct strbuf sb = STRBUF_INIT, err = STRBUF_INIT;
+	struct commit_extra_header *extra = NULL, **tail = &extra;
 
 	if (!state->no_verify && run_hooks(the_repository, "pre-applypatch"))
 		exit(1);
@@ -1701,10 +1712,33 @@ static void do_commit(const struct am_state *state)
 							 : state->author_date,
 				      IDENT_STRICT);
 
+	/*
+	 * A rebased patch keeps the context of the commit it came from;
+	 * others take the one given with --context.
+	 */
+	if (state->rebasing) {
+		struct commit *orig = lookup_commit_reference(the_repository,
+							      &state->orig_commit);
+		struct object_id context;
+		int err = orig ? repo_commit_context(the_repository, orig, &context) : -1;
+
+		if (err == -2)
+			die(_("commit %s names a context that is not a checkpoint: %s"),
+			    oid_to_hex(&state->orig_commit), oid_to_hex(&context));
+		if (!err)
+			append_context_header(&context, &tail);
+	} else if (state->has_context) {
+		append_context_header(&state->context, &tail);
+	}
+	if (repo_keep_context(the_repository, extra, KEEP_CONTEXT_REQUIRED, &err))
+		die("%s", err.buf);
+
 	if (commit_tree_extended(state->msg, state->msg_len, &tree, parents,
 				 &commit, author, committer, state->sign_commit,
-				 NULL))
+				 extra))
 		die(_("failed to write commit object"));
+	free_commit_extra_headers(extra);
+	strbuf_release(&err);
 
 	reflog_msg = getenv("GIT_REFLOG_ACTION");
 	if (!reflog_msg)
@@ -2321,6 +2355,7 @@ int cmd_am(int argc,
 	enum resume_type resume_mode = RESUME_FALSE;
 	int in_progress;
 	int ret = 0;
+	const char *context_arg = NULL;
 
 	const char * const usage[] = {
 		N_("git am [<options>] [(<mbox> | <Maildir>)...]"),
@@ -2442,6 +2477,8 @@ int cmd_am(int argc,
 		  PARSE_OPT_NONEG, am_option_parse_empty),
 		OPT_HIDDEN_BOOL(0, "rebasing", &state.rebasing,
 			N_("(internal use for git-rebase)")),
+		OPT_STRING(0, "context", &context_arg, N_("commit"),
+			   N_("context checkpoint the patches were made from")),
 		OPT_END()
 	};
 
@@ -2456,6 +2493,19 @@ int cmd_am(int argc,
 		am_load(&state);
 
 	argc = parse_options(argc, argv, prefix, options, usage, 0);
+
+	if (context_arg) {
+		int err = repo_get_context_oid(the_repository, context_arg,
+					       &state.context);
+
+		if (err == -1)
+			die(_("not a valid commit name %s"), context_arg);
+		if (err)
+			die(_("not a context checkpoint: %s"), context_arg);
+		if (in_progress)
+			die(_("--context can only be given when starting to apply patches"));
+		state.has_context = 1;
+	}
 
 	if (binary >= 0)
 		fprintf_ln(stderr, _("The -b/--binary option has been a no-op for long time, and\n"
@@ -2521,6 +2571,16 @@ int cmd_am(int argc,
 
 		if (state.interactive && !paths.nr)
 			die(_("interactive mode requires patches on the command line"));
+
+		if (!state.rebasing && !state.has_context) {
+			int require = 0;
+
+			if (!repo_config_get_bool(the_repository,
+						  "commit.requirecontext", &require) &&
+			    require)
+				die(_("commit.requireContext is set; name the context "
+				      "checkpoint with --context <commit>"));
+		}
 
 		am_setup(&state, patch_format, paths.v, keep_cr);
 

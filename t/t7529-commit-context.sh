@@ -332,6 +332,55 @@ test_expect_success 'rebase --rebase-merges keeps the context of recreated merge
 	test "$(git rev-parse HEAD^)" != "$(git rev-parse remerge@{1}^)"
 '
 
+test_expect_success 'rebase --apply keeps and pins every replayed context' '
+	test_config commit.requireContext true &&
+	git for-each-ref --format="delete %(refname)" refs/cs/pins/ | git update-ref --stdin &&
+	git checkout -b apply-rebase topic &&
+	git rebase --apply other &&
+	test "$(context_of HEAD)" = "$(cat ctx)" &&
+	pinned $(cat ctx)
+'
+
+test_expect_success 'am --context links and pins every applied patch' '
+	test_config commit.requireContext true &&
+	git format-patch -2 -o patches topic &&
+	git checkout -b am-linked other &&
+	git update-ref -d refs/cs/pins/$(cat ctx2) &&
+	git am --context $(cat ctx2) patches/0002-*.patch &&
+	test "$(context_of HEAD)" = "$(cat ctx2)" &&
+	pinned $(cat ctx2)
+'
+
+test_expect_success 'am refuses to start without --context with commit.requireContext' '
+	test_config commit.requireContext true &&
+	git checkout -b am-unlinked other &&
+	test_must_fail git am patches/0002-*.patch 2>err &&
+	test_grep "commit.requireContext is set" err &&
+	test "$(git rev-parse HEAD)" = "$(git rev-parse other)" &&
+	test_path_is_missing .git/rebase-apply
+'
+
+test_expect_success 'am --context refuses commits that are not checkpoints' '
+	test_must_fail git am --context HEAD patches/0002-*.patch 2>err &&
+	test_grep "not a context checkpoint: HEAD" err &&
+	test_path_is_missing .git/rebase-apply
+'
+
+test_expect_success 'am keeps --context across a resolved conflict' '
+	git checkout -b am-resume clash &&
+	test_must_fail git am -3 --context $(cat ctx) patches/0002-*.patch &&
+	echo resolved >file &&
+	git add file &&
+	git am --continue &&
+	test "$(context_of HEAD)" = "$(cat ctx)"
+'
+
+test_expect_success 'am without --context or commit.requireContext writes no header' '
+	git checkout -b am-plain other &&
+	git am patches/0002-*.patch &&
+	test -z "$(context_of HEAD)"
+'
+
 test_expect_success 'cherry-pick refuses a commit linked to a non-checkpoint' '
 	git checkout -b badpick other &&
 	bad=$(relink topic $(git rev-parse other)) &&

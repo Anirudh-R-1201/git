@@ -16,7 +16,7 @@ git am [--signoff] [--keep] [--[no-]keep-cr] [--[no-]utf8] [--[no-]verify]
 	 [--exclude=<path>] [--include=<path>] [--reject] [-q | --quiet]
 	 [--[no-]scissors] [-S[<key-id>]] [--patch-format=<format>]
 	 [--quoted-cr=<action>]
-	 [--empty=(stop|drop|keep)]
+	 [--empty=(stop|drop|keep)] [--context <commit>]
 	 [(<mbox> | <Maildir>)...]
 git am (--continue | --skip | --abort | --quit | --retry | --show-current-patch[=(diff|raw)] | --allow-empty)
 
@@ -178,6 +178,13 @@ applying.
 	commit creation as the committer date. This allows the
 	user to lie about the author date by using the same
 	value as the committer date.
+
+`--context <commit>`::
+	Record _<commit>_, a context checkpoint, in a `context` header of
+	every commit created; see `--context` in linkgit:git-commit[1].
+	With `commit.requireContext` set, `git am` refuses to start
+	without it. A `git rebase --apply` keeps the `context` header of
+	each commit it replays instead.
 
 `--skip`::
 	Skip the current patch.  This is only meaningful when

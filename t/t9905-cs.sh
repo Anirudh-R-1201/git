@@ -30,7 +30,11 @@ test_expect_success 'commit stores context without touching code refs' '
 	test "$(git rev-parse HEAD)" = "$(git rev-parse code)" &&
 	test "$(active $base)" = "[\"m1\",\"m2\"]" &&
 	git cs log main >log &&
-	test_line_count = 1 log
+	grep -c "^[0-9a-f]* .* cs checkpoint$" log >count &&
+	echo 1 >expect &&
+	test_cmp expect count &&
+	grep "^    + m1$" log &&
+	grep "^    + m2$" log
 '
 
 test_expect_success 'commit refuses a stale expected tip' '
@@ -133,7 +137,8 @@ test_expect_success 'switch selects a branch per workspace' '
 	test "$(git rev-parse refs/cs/heads/feat)" = $tip &&
 	test "$(git rev-parse refs/cs/heads/retry)" = $base &&
 	git cs log @w1 >log &&
-	test_line_count = 2 log &&
+	grep "^    - m2$" log &&
+	test $(grep -c "^[0-9a-f]" log) = 2 &&
 	test_must_fail git cs switch w3 nope
 '
 
@@ -155,7 +160,11 @@ test_expect_success 'merge takes the ordered union of both sides' '
 	m=$(git cs merge a refs/cs/heads/b) &&
 	test "$(active $m)" = "[\"m1\",\"m2\",\"a1\",\"b1\"]" &&
 	git rev-list --parents -1 $m >parents &&
-	test $(wc -w <parents) = 3
+	test $(wc -w <parents) = 3 &&
+	git cs log a >log &&
+	head -n 2 log >top &&
+	grep "cs merge refs/cs/heads/b (merge)$" top &&
+	grep "^    + b1$" top
 '
 
 test_expect_success 'merge reports order conflicts and keeps the branch' '

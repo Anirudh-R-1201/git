@@ -98,8 +98,19 @@ cmd_show () {
 	} | jq -cs '.[0] + {chunks: .[1:]}'
 }
 
+# One line per checkpoint, then the chunks it changed against its first parent.
 cmd_log () {
-	git log --format='%H %ad' "$(ref "$1")"
+	git log --format='%H %P' "$(ref "$1")" |
+	while read -r c p more
+	do
+		git log -1 --date=short --format="%h %ad %s${more:+ (merge)}" $c
+		if test -n "$p"
+		then
+			cmd_diff $p $c
+		else
+			cmd_show $c | jq -r '.active[] | "+ " + .'
+		fi | sed 's/^/    /'
+	done
 }
 
 cmd_diff () {
@@ -185,7 +196,7 @@ union($cur; $to | .active |= map(select(IN($cur.active[], $add[])))) | .active -
 
 # Print a new checkpoint on $1 that repeats the change from $2 to $3.
 replay () {
-	tip=$1 merge= payload="$tmp.replay"
+	tip=$1 merge= payload="$tmp.replay" msg="cs replay $2..$3"
 	cmd_show $1 >"$tmp.cur" && cmd_show $2 >"$tmp.from" && cmd_show $3 >"$tmp.to" &&
 	jq -n --slurpfile cur "$tmp.cur" --slurpfile from "$tmp.from" --slurpfile to "$tmp.to" \
 		"$union $replay" >"$payload" && checkpoint
@@ -224,7 +235,7 @@ cmd_merge_preview () {
 }
 
 cmd_merge () {
-	branch=$1 result= noff=
+	branch=$1 name=$2 result= noff=
 	ours=$(git rev-parse --verify "$(ref "$branch")") &&
 	theirs=$(rev "$2") || exit
 	shift 2
@@ -253,7 +264,7 @@ cmd_merge () {
 		result="$tmp.merge"
 		cmd_merge_preview $ours $theirs >"$result" || exit
 	}
-	merge=$theirs cmd_commit "$branch" "$result" --expect $ours
+	merge=$theirs msg="cs merge $name" cmd_commit "$branch" "$result" --expect $ours
 }
 
 cmd_pin () {

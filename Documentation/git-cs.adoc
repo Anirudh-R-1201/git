@@ -99,7 +99,9 @@ commits are refused.
 	given back to `commit` unchanged.
 
 `log <branch>`::
-	List the checkpoints on _<branch>_, newest first.
+	List the checkpoints on _<branch>_, newest first, each with its
+	date, subject and a `(merge)` marker, followed by the chunks it
+	dropped, added or reordered against its first parent.
 
 `diff <checkpoint> <checkpoint>`::
 	Show chunks dropped (`-`) and added (`+`) between two active

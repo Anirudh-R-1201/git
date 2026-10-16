@@ -6,6 +6,8 @@ from code commits to the exact context that produced them. The behaviour it
 must have is defined by the design document in this directory,
 [ContextShadow_Design.tex](ContextShadow_Design.tex) (v0.1).
 
+Latest results, including a table of every primitive: [RESULTS.md](RESULTS.md).
+
 There are three layers of tests:
 
 | Layer | Where | What it proves |

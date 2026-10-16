@@ -86,9 +86,10 @@ cmd_commit () {
 	branch=$1 payload=$2 expect=$4
 	test -n "$payload" || usage
 	case "$3" in ""|--expect) ;; *) usage ;; esac
+	git check-ref-format "$(ref "$branch" 2>/dev/null)" || die "invalid context branch: $branch"
 	tip=$(git rev-parse -q --verify "$(ref "$branch")")
 	commit=$(checkpoint) || exit
-	git update-ref --create-reflog "$(ref "$branch")" $commit "${expect:-$tip}" || stale
+	git update-ref --create-reflog "$(ref "$branch")" $commit "${expect:-$tip}" 2>/dev/null || stale
 	echo $commit
 }
 
@@ -276,7 +277,7 @@ merge_once () {
 	if git merge-base --is-ancestor $ours $theirs
 	then
 		test -n "$noff$result" || {
-			git update-ref --create-reflog "$(ref "$branch")" $theirs $ours || stale
+			git update-ref --create-reflog "$(ref "$branch")" $theirs $ours 2>/dev/null || stale
 			echo >&2 "Fast-forward"
 			echo $theirs
 			return

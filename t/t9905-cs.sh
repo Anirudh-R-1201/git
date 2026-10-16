@@ -239,7 +239,11 @@ test_expect_success 'a lost race exits 75 without --retry' '
 	tip=$(git rev-parse refs/cs/heads/shared) &&
 	payload "[\"m1\"]" p.json &&
 	git cs commit shared p.json --expect $tip &&
-	test_expect_code 75 git cs commit shared p.json --expect $tip
+	test_expect_code 75 git cs commit shared p.json --expect $tip 2>err &&
+	echo STALE_TIP >expect &&
+	test_cmp expect err &&
+	test_must_fail git cs commit "bad..name" p.json 2>err &&
+	grep "invalid context branch" err
 '
 
 test_expect_success 'merge accepts a supplied result' '

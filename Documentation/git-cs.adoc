@@ -91,8 +91,8 @@ commits are refused.
 
 `commit <branch> <payload> [--expect <checkpoint>]`::
 	Store _<payload>_ as a new checkpoint on top of _<branch>_ and
-	print its ID. With `--expect`, refuse with `STALE_TIP` (exit
-	status 75) unless
+	print its ID. With `--expect`, refuse with exactly `STALE_TIP`
+	on standard error (exit status 75) unless
 	the branch is still at _<checkpoint>_, so concurrent writers
 	cannot overwrite each other.
 

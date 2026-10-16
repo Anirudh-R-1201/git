@@ -398,4 +398,41 @@ test_expect_success 'rebase stops at a commit linked to a non-checkpoint' '
 	git rebase --abort
 '
 
+replayed () {
+	sed -n "s/^update [^ ]* \([0-9a-f]*\) .*/\1/p" "$1"
+}
+
+test_expect_success 'replay keeps and pins the context of every commit' '
+	test_config commit.requireContext true &&
+	git for-each-ref --format="delete %(refname)" refs/cs/pins/ | git update-ref --stdin &&
+	git replay --ref-action=print --onto other other..topic >out &&
+	new=$(replayed out) &&
+	test "$(context_of $new)" = "$(cat ctx)" &&
+	pinned $(cat ctx)
+'
+
+test_expect_success 'replay refuses a commit linked to a non-checkpoint' '
+	git branch -f replay-bad $(relink topic $(git rev-parse other)) &&
+	before=$(git rev-parse replay-bad) &&
+	test_must_fail git replay --onto other replay-bad^..replay-bad 2>err &&
+	test_grep "not a checkpoint" err &&
+	test "$(git rev-parse replay-bad)" = "$before"
+'
+
+test_expect_success 'replay --revert does not copy the reverted commit context' '
+	git branch -f replay-revert other &&
+	git replay --ref-action=print --revert=replay-revert other^..other >out &&
+	new=$(replayed out) &&
+	test -n "$new" &&
+	test -z "$(context_of $new)"
+'
+
+test_expect_success 'replay refuses unlinked commits with commit.requireContext' '
+	test_config commit.requireContext true &&
+	before=$(git rev-parse replay-revert) &&
+	test_must_fail git replay --revert=replay-revert other^..other 2>err &&
+	test_grep "commit.requireContext is set" err &&
+	test "$(git rev-parse replay-revert)" = "$before"
+'
+
 test_done

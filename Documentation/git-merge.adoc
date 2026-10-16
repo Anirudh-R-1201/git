@@ -13,7 +13,7 @@ git merge [-n] [--stat] [--compact-summary] [--no-commit] [--squash] [--[no-]edi
 	[--no-verify] [-s <strategy>] [-X <strategy-option>] [-S[<keyid>]]
 	[--[no-]allow-unrelated-histories]
 	[--[no-]rerere-autoupdate] [-m <msg>] [-F <file>]
-	[--into-name <branch>] [<commit>...]
+	[--into-name <branch>] [--context <commit>] [<commit>...]
 git merge (--continue | --abort | --quit)
 
 DESCRIPTION
@@ -82,6 +82,15 @@ invocations. The automated message can include the branch description.
 	Prepare the default merge message as if merging to the branch
 	_<branch>_, instead of the name of the real branch to which
 	the merge is made.
+
+`--context <commit>`::
+	Record _<commit>_, a context checkpoint, in a `context` header of
+	the merge commit (in case one is created); see `--context` in
+	linkgit:git-commit[1]. With `commit.requireContext` set and no
+	`--context`, a merge that needs a merge commit stops before
+	committing, as with `--no-commit` but with a nonzero exit status,
+	so that it can be finished with `git commit --context`;
+	fast-forwards are unaffected.
 
 `-F <file>`::
 `--file=<file>`::

@@ -74,6 +74,9 @@ static const char * const builtin_merge_usage[] = {
 
 static int show_diffstat = MERGE_SHOW_DIFFSTAT, shortlog_len = -1, squash;
 static int option_commit = -1;
+static const char *context_arg;
+static struct object_id context_oid;
+static int require_context, stopped_for_context;
 static int option_edit = -1;
 static int allow_trivial = 1, have_message, verify_signatures;
 static int check_trust_level = 1;
@@ -282,6 +285,8 @@ static struct option builtin_merge_options[] = {
 		N_("create a single commit instead of doing a merge")),
 	OPT_BOOL(0, "commit", &option_commit,
 		N_("perform a commit if the merge succeeds (default)")),
+	OPT_STRING(0, "context", &context_arg, N_("commit"),
+		   N_("context checkpoint the merge commit was made from")),
 	OPT_BOOL('e', "edit", &option_edit,
 		N_("edit message before committing")),
 	OPT_CLEANUP(&cleanup_arg),
@@ -734,6 +739,10 @@ static int git_merge_config(const char *k, const char *v,
 		return 0;
 	}
 
+	if (!strcmp(k, "commit.requirecontext")) {
+		require_context = git_config_bool(k, v);
+		return 0;
+	}
 	status = fmt_merge_msg_config(k, v, ctx, cb);
 	if (status)
 		return status;
@@ -986,6 +995,25 @@ static void prepare_to_commit(struct commit_list *remoteheads)
 	strbuf_release(&msg);
 }
 
+/* Write the merge commit, linked to and pinning its context if one was named. */
+static void write_merge_commit(const struct object_id *tree,
+			       struct commit_list *parents,
+			       struct object_id *result)
+{
+	struct commit_extra_header *extra = NULL, **tail = &extra;
+	struct strbuf err = STRBUF_INIT;
+
+	if (context_arg)
+		append_context_header(&context_oid, &tail);
+	if (repo_keep_context(the_repository, extra, &err))
+		die("%s", err.buf);
+	if (commit_tree_extended(merge_msg.buf, merge_msg.len, tree, parents,
+				 result, NULL, NULL, sign_commit, extra))
+		die(_("failed to write commit object"));
+	free_commit_extra_headers(extra);
+	strbuf_release(&err);
+}
+
 static int merge_trivial(struct commit *head, struct commit_list *remoteheads)
 {
 	struct object_id result_tree, result_commit;
@@ -1001,9 +1029,7 @@ static int merge_trivial(struct commit *head, struct commit_list *remoteheads)
 	pptr = commit_list_append(head, pptr);
 	pptr = commit_list_append(remoteheads->item, pptr);
 	prepare_to_commit(remoteheads);
-	if (commit_tree(merge_msg.buf, merge_msg.len, &result_tree, parents,
-			&result_commit, NULL, sign_commit))
-		die(_("failed to write commit object"));
+	write_merge_commit(&result_tree, parents, &result_commit);
 	finish(head, remoteheads, &result_commit, "In-index merge");
 
 	remove_merge_branch_state(the_repository);
@@ -1028,9 +1054,7 @@ static int finish_automerge(struct commit *head,
 	if (!head_subsumed || fast_forward == FF_NO)
 		commit_list_insert(head, &parents);
 	prepare_to_commit(remoteheads);
-	if (commit_tree(merge_msg.buf, merge_msg.len, result_tree, parents,
-			&result_commit, NULL, sign_commit))
-		die(_("failed to write commit object"));
+	write_merge_commit(result_tree, parents, &result_commit);
 	strbuf_addf(&buf, "Merge made by the '%s' strategy.", wt_strategy);
 	finish(head, remoteheads, &result_commit, buf.buf);
 
@@ -1516,6 +1540,19 @@ int cmd_merge(int argc,
 	if (option_commit < 0)
 		option_commit = 1;
 
+	if (context_arg) {
+		int err = repo_get_context_oid(the_repository, context_arg, &context_oid);
+
+		if (err == -1)
+			die(_("not a valid commit name %s"), context_arg);
+		if (err)
+			die(_("not a context checkpoint: %s"), context_arg);
+	} else if (require_context && option_commit) {
+		/* Fast-forwards still happen; a merge commit waits for its context. */
+		option_commit = 0;
+		stopped_for_context = 1;
+	}
+
 	if (!argc) {
 		if (default_to_upstream) {
 			argc = setup_with_upstream(&argv);
@@ -1867,11 +1904,21 @@ int cmd_merge(int argc,
 	} else
 		write_merge_state(remoteheads);
 
-	if (merge_was_ok)
+	if (merge_was_ok && stopped_for_context)
+		fprintf(stderr, _("Automatic merge went well; stopped before "
+			"committing because commit.requireContext is set\n"));
+	else if (merge_was_ok)
 		fprintf(stderr, _("Automatic merge went well; "
 			"stopped before committing as requested\n"));
 	else
 		ret = suggest_conflicts();
+	if (context_arg || stopped_for_context)
+		fprintf(stderr, _("Finish the merge with "
+			"git commit --context %s\n"),
+			context_arg ? context_arg : "<checkpoint>");
+	/* The merge commit that was asked for was not made. */
+	if (stopped_for_context && !ret)
+		ret = 1;
 	if (autostash)
 		printf(_("When finished, apply stashed changes with `git stash pop`\n"));
 

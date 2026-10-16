@@ -255,6 +255,49 @@ test_expect_success 'a fixup refuses to keep a link to a non-checkpoint' '
 	git rebase --abort
 '
 
+test_expect_success 'merge --context links and pins the merge commit' '
+	test_config commit.requireContext true &&
+	git checkout -b merge-linked other &&
+	git merge --no-edit --context $(cat ctx) topic &&
+	git rev-parse HEAD^2 &&
+	test "$(context_of HEAD)" = "$(cat ctx)" &&
+	pinned $(cat ctx)
+'
+
+test_expect_success 'merge --context refuses commits that are not checkpoints' '
+	git checkout -b merge-bad other &&
+	test_must_fail git merge --no-edit --context HEAD topic 2>err &&
+	test_grep "not a context checkpoint: HEAD" err &&
+	test "$(git rev-parse HEAD)" = "$(git rev-parse other)"
+'
+
+test_expect_success 'merge without --context stops before committing with commit.requireContext' '
+	test_config commit.requireContext true &&
+	git checkout -b merge-stop other &&
+	test_must_fail git merge --no-edit topic 2>err &&
+	test_grep "commit.requireContext is set" err &&
+	test_grep "git commit --context" err &&
+	test "$(git rev-parse HEAD)" = "$(git rev-parse other)" &&
+	git rev-parse -q --verify MERGE_HEAD &&
+	git commit --no-edit --context $(cat ctx2) &&
+	git rev-parse HEAD^2 &&
+	test "$(context_of HEAD)" = "$(cat ctx2)"
+'
+
+test_expect_success 'merge still fast-forwards with commit.requireContext' '
+	test_config commit.requireContext true &&
+	git checkout -b merge-ff topic^ &&
+	git merge topic &&
+	test "$(git rev-parse HEAD)" = "$(git rev-parse topic)"
+'
+
+test_expect_success 'merge without commit.requireContext commits unlinked' '
+	git checkout -b merge-plain other &&
+	git merge --no-edit topic &&
+	git rev-parse HEAD^2 &&
+	test -z "$(context_of HEAD)"
+'
+
 test_expect_success 'cherry-pick refuses a commit linked to a non-checkpoint' '
 	git checkout -b badpick other &&
 	bad=$(relink topic $(git rev-parse other)) &&

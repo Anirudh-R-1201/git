@@ -57,3 +57,27 @@ identity and order conflicts, code commits used as checkpoints), plain-text
 messages (`commit -m`, `show --messages`), concurrency (eight writers from one
 tip, eight parallel publishers with and without `--retry`), retention after
 `git gc`, and transfer by push, fetch and bundle.
+
+## Parallel agents sharing learnings
+
+This checks the use case `git cs` exists for: several agents work on one
+project at the same time, each on its own code branch, and exchange decisions
+only through context.
+
+```bash
+cs-testing/agents/setup-team.sh /tmp/cs-team
+# start three agents with agents/PROMPT.md (alpha, beta, gamma) and wait for them
+cs-testing/agents/verify-team.sh /tmp/cs-team
+```
+
+| File | Role |
+|---|---|
+| [agents/setup-team.sh](agents/setup-team.sh) | Creates the `textstats` project, seeds the team context `main` with two `-m` messages, and adds a worktree per agent |
+| [agents/PROMPT.md](agents/PROMPT.md) | The prompt for each agent: the `git cs` commands to use and each agent's task |
+| [agents/cs-wait](agents/cs-wait) | Helper the agents call to rebase onto the team context until teammates' learnings arrive |
+| [agents/verify-team.sh](agents/verify-team.sh) | Checks the shared context, merges the code with linked merge commits, runs the tests, and checks that a fresh clone resolves every link |
+
+The tasks depend on each other on purpose: beta must reuse alpha's tokenizer
+without seeing alpha's code, and gamma must write tests only from alpha's and
+beta's published contracts. The tests passing on the merged code is the
+evidence that learnings travelled through `git cs`.

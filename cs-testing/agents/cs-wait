@@ -1,0 +1,19 @@
+#!/bin/sh
+# Usage: cs-wait <me> <agent>...
+# Rebase context branch <me> onto the team context until every <agent> has published
+# a learning (about three minutes at most), then print the context as plain messages.
+me=$1; shift
+for i in $(seq 1 18)
+do
+	git cs rebase "$me" main >/dev/null || echo "rebase failed (attempt $i)" >&2
+	missing=
+	for a in "$@"
+	do
+		git cs show "$me" | jq -e --arg p "$a:" 'any(.chunks[]; (.body // "" | startswith($p)) and .kind == "learning")' >/dev/null ||
+		missing="$missing $a"
+	done
+	test -z "$missing" && { echo "cs-wait: all learnings present" >&2; break; }
+	echo "cs-wait: waiting for:$missing" >&2
+	sleep 10
+done
+git cs show "$me" --messages

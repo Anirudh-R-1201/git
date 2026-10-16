@@ -93,6 +93,10 @@ test_expect_success 'chunk bytes survive escapes unchanged' '
 test_expect_success 'checkpoint arguments take context branch names first' '
 	git cs branch master $base &&
 	test "$(git cs show master)" = "$(git cs show $base)" &&
+	git cs pin master &&
+	git rev-parse refs/cs/pins/$base &&
+	git cs unpin master &&
+	test_must_fail git rev-parse -q --verify refs/cs/pins/$base &&
 	git cs diff main master &&
 	git cs switch w0 master &&
 	test "$(git cs show @w0)" = "$(git cs show $base)" &&

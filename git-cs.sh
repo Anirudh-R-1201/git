@@ -305,7 +305,8 @@ cmd_pin () {
 cmd_unpin () {
 	for c in "$@"
 	do
-		git update-ref -d refs/cs/pins/$(git rev-parse --verify "$c^{commit}") || exit
+		c=$(rev "$c") &&
+		git update-ref -d refs/cs/pins/$c || exit
 	done
 }
 

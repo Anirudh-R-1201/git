@@ -3,7 +3,7 @@
 # git cs: version captured context in a history separate from code.
 
 SUBDIRECTORY_OK=Yes
-USAGE='[--json] commit <branch> <payload> [--expect <checkpoint>]
+USAGE='[--json] commit <branch> (<payload> | -m <message> [--kind <kind>]) [--expect <checkpoint>]
    or: show <checkpoint>
    or: log <branch>
    or: diff <checkpoint> <checkpoint>
@@ -83,11 +83,36 @@ checkpoint () {
 }
 
 cmd_commit () {
-	branch=$1 payload=$2 expect=$4
-	test -n "$payload" || usage
-	case "$3" in ""|--expect) ;; *) usage ;; esac
+	branch=$1 payload= expect= message= kind=message
+	shift
+	while test $# -gt 0
+	do
+		case "$1" in
+		-m) message=$2; shift ;;
+		--kind) kind=$2; shift ;;
+		--expect) expect=$2; shift ;;
+		-*) usage ;;
+		*) payload=$1 ;;
+		esac
+		shift
+	done
+	test -n "$payload$message" || usage
+	test -z "$payload" || test -z "$message" || usage
 	git check-ref-format "$(ref "$branch" 2>/dev/null)" || die "invalid context branch: $branch"
 	tip=$(git rev-parse -q --verify "$(ref "$branch")")
+	test -z "$message" || {
+		# Append the message as a new chunk on top of the current tip.
+		id=m$(printf '%s %s %s %s' "$tip" $$ "$(date +%s)" "$message" | git hash-object --stdin | cut -c1-15)
+		payload="$tmp.message" msg=${msg:-$message}
+		if test -n "${expect:-$tip}"
+		then
+			cmd_show ${expect:-$tip}
+		else
+			echo '{"schema":"cs/1","active":[],"chunks":[]}'
+		fi |
+		jq --arg id $id --arg kind "$kind" --arg body "$message" \
+			'.active += [$id] | .chunks += [{id: $id, kind: $kind, body: $body}]' >"$payload" || exit
+	}
 	commit=$(checkpoint) || exit
 	git update-ref --create-reflog "$(ref "$branch")" $commit "${expect:-$tip}" 2>/dev/null || stale
 	echo $commit

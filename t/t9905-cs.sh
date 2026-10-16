@@ -37,6 +37,21 @@ test_expect_success 'commit stores context without touching code refs' '
 	grep "^    + m2$" log
 '
 
+test_expect_success 'commit -m appends plain messages without a payload' '
+	first=$(git cs commit notes -m "Investigate SQLite") &&
+	git cs commit notes -m "Use WAL mode" --kind learning &&
+	git cs show notes | jq -c "[.chunks[] | {kind, body}] | sort_by(.body)" >actual &&
+	echo "[{\"kind\":\"message\",\"body\":\"Investigate SQLite\"},{\"kind\":\"learning\",\"body\":\"Use WAL mode\"}]" >expect &&
+	test_cmp expect actual &&
+	git cs show notes | jq -r ".active | length" >count &&
+	echo 2 >expect &&
+	test_cmp expect count &&
+	git cs log notes >log &&
+	grep "Use WAL mode$" log &&
+	test_expect_code 75 git cs commit notes -m late --expect $first &&
+	test_must_fail git cs commit notes p.json -m both
+'
+
 test_expect_success 'commit refuses a stale expected tip' '
 	payload "[\"m1\"]" p.json &&
 	tip=$(git cs commit main p.json --expect $base) &&

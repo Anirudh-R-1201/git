@@ -8,7 +8,7 @@ git-cs - Version captured context in a history separate from code
 SYNOPSIS
 --------
 [synopsis]
-git cs commit <branch> <payload> [--expect <checkpoint>]
+git cs commit <branch> (<payload> | -m <message> [--kind <kind>]) [--expect <checkpoint>]
 git cs show <checkpoint>
 git cs log <branch>
 git cs diff <checkpoint> <checkpoint>
@@ -89,9 +89,11 @@ Arguments named _<checkpoint>_ may be a context branch name,
 A context branch name wins over a code ref of the same name; code
 commits are refused.
 
-`commit <branch> <payload> [--expect <checkpoint>]`::
+`commit <branch> (<payload> | -m <message> [--kind <kind>]) [--expect <checkpoint>]`::
 	Store _<payload>_ as a new checkpoint on top of _<branch>_ and
-	print its ID. With `--expect`, refuse with exactly `STALE_TIP`
+	print its ID. With `-m`, no payload is needed: _<message>_ is
+	appended as a new chunk of _<kind>_ (default `message`) with a
+	generated ID, and its first line becomes the checkpoint subject. With `--expect`, refuse with exactly `STALE_TIP`
 	on standard error (exit status 75) unless
 	the branch is still at _<checkpoint>_, so concurrent writers
 	cannot overwrite each other.

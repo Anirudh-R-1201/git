@@ -22,6 +22,7 @@
 #include "hash-lookup.h"
 #include "wt-status.h"
 #include "advice.h"
+#include "config.h"
 #include "refs.h"
 #include "commit-reach.h"
 #include "setup.h"
@@ -1465,6 +1466,42 @@ int repo_get_context_oid(struct repository *r, const char *name,
 		return -1;
 	oidcpy(oid, &commit->object.oid);
 	return repo_is_context_checkpoint(r, oid) ? 0 : -2;
+}
+
+int repo_keep_context(struct repository *r,
+		      const struct commit_extra_header *extra,
+		      struct strbuf *err)
+{
+	struct object_id oid;
+	struct strbuf ref = STRBUF_INIT;
+	const char *end, *value_end;
+	int require = 0, ret = 0;
+
+	for (; extra; extra = extra->next)
+		if (!strcmp(extra->key, "context"))
+			break;
+	if (!extra)
+		return 0;
+	/* Headers read back from a commit keep their newline. */
+	value_end = extra->value + extra->len;
+	if (value_end > extra->value && value_end[-1] == '\n')
+		value_end--;
+	if (parse_oid_hex_algop(extra->value, &oid, &end, r->hash_algo) ||
+	    end != value_end || !repo_is_context_checkpoint(r, &oid)) {
+		strbuf_addf(err, _("context is not a checkpoint: %.*s"),
+			    (int)(value_end - extra->value), extra->value);
+		return -1;
+	}
+	if (repo_config_get_bool(r, "commit.requirecontext", &require) || !require)
+		return 0;
+	strbuf_addf(&ref, "refs/cs/pins/%s", oid_to_hex(&oid));
+	if (refs_update_ref(get_main_ref_store(r), "commit: pin context",
+			    ref.buf, &oid, NULL, 0, UPDATE_REFS_QUIET_ON_ERR)) {
+		strbuf_addf(err, _("cannot pin context %s"), oid_to_hex(&oid));
+		ret = -1;
+	}
+	strbuf_release(&ref);
+	return ret;
 }
 
 static int convert_commit_extra_headers(const struct commit_extra_header *orig,

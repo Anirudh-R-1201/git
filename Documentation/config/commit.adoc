@@ -8,7 +8,11 @@ endif::git-commit[]
 	A boolean to make `git commit` refuse to create a commit that does
 	not name its context checkpoint with `--context`, unless it amends
 	a commit that already has one. Naming a commit that is not a
-	checkpoint does not satisfy it. {see-git-commit}
+	checkpoint does not satisfy it. When set, every commit that
+	`git commit`, linkgit:git-commit-tree[1], linkgit:git-cherry-pick[1]
+	or linkgit:git-rebase[1] writes with a `context` header also pins
+	that checkpoint as `refs/cs/pins/<checkpoint>`, so it is kept as
+	long as the link is. {see-git-commit}
 
 `commit.cleanup`::
 	This setting overrides the default of the `--cleanup` option in

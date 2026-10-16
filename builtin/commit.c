@@ -1994,6 +1994,10 @@ int cmd_commit(int argc,
 		append_context_header(&context_oid, &tail);
 	}
 
+	if (repo_keep_context(the_repository, extra, &err)) {
+		rollback_index_files();
+		die("%s", err.buf);
+	}
 	if (commit_tree_extended(sb.buf, sb.len, &the_repository->index->cache_tree->oid,
 				 parents, &oid, author_ident.buf, NULL,
 				 sign_commit, extra)) {

@@ -79,7 +79,8 @@ COMMANDS
 --------
 `init`::
 	Set `commit.requireContext` so that `git commit` refuses code
-	commits that do not name their context.
+	commits that do not name their context, and pins the checkpoint
+	of every one that does.
 
 `commit <branch> (-m <message> | -F <file>) [--kind <kind>] [--code <commit>] [--expect <checkpoint>]`::
 	Record a message as a new checkpoint on top of _<branch>_,
@@ -163,6 +164,9 @@ COMMANDS
 
 `commit-code --context <checkpoint> -- <git-commit-options>`::
 	Pin _<checkpoint>_ and run `git commit --context <checkpoint>`.
+	After `init`, a plain `git commit --context` pins it as well;
+	`commit-code` also accepts context branch names and pins in
+	repositories without `init`.
 
 `fsck [<code-revs>...]`::
 	Check that every ref under `refs/cs/` is a checkpoint with an

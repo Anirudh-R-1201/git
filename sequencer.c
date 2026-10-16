@@ -1726,6 +1726,10 @@ static int try_to_commit(struct repository *r,
 		free(email);
 	}
 
+	if (repo_keep_context(r, extra, &err)) {
+		res = error("%s", err.buf);
+		goto out;
+	}
 	if (commit_tree_extended(msg->buf, msg->len, &tree, parents, oid,
 				 author, committer, opts->gpg_sign, extra)) {
 		res = error(_("failed to write commit object"));

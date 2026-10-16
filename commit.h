@@ -307,6 +307,16 @@ int repo_commit_context(struct repository *r, struct commit *commit,
 int repo_get_context_oid(struct repository *r, const char *name,
 			 struct object_id *oid);
 
+/*
+ * Check that the "context" header among "extra", if any, names a context
+ * checkpoint and, with commit.requireContext set, pin that checkpoint in
+ * refs/cs/pins/ so it outlives the context branches. Return 0 on success,
+ * or -1 with a message in "err".
+ */
+int repo_keep_context(struct repository *r,
+		      const struct commit_extra_header *extra,
+		      struct strbuf *err);
+
 int commit_tree(const char *msg, size_t msg_len,
 		const struct object_id *tree,
 		const struct commit_list *parents, struct object_id *ret,

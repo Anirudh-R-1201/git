@@ -104,6 +104,7 @@ int cmd_commit_tree(int argc,
 	struct object_id context_oid;
 	const char *context = NULL;
 	struct commit_extra_header *extra = NULL, **tail = &extra;
+	struct strbuf err = STRBUF_INIT;
 
 	struct option options[] = {
 		OPT_CALLBACK_F('p', NULL, &parents, N_("parent"),
@@ -161,6 +162,11 @@ int cmd_commit_tree(int argc,
 	append_merge_tag_headers(parents, &tail);
 	if (context)
 		append_context_header(&context_oid, &tail);
+	if (repo_keep_context(the_repository, extra, &err)) {
+		error("%s", err.buf);
+		ret = 1;
+		goto out;
+	}
 	if (commit_tree_extended(buffer.buf, buffer.len, &tree_oid, parents,
 				 &commit_oid, NULL, NULL, sign_commit, extra)) {
 		ret = 1;
@@ -171,6 +177,7 @@ int cmd_commit_tree(int argc,
 	ret = 0;
 
 out:
+	strbuf_release(&err);
 	free_commit_extra_headers(extra);
 	commit_list_free(parents);
 	strbuf_release(&buffer);

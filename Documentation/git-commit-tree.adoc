@@ -71,7 +71,8 @@ OPTIONS
 	Record _<commit>_, the context checkpoint this commit was made
 	from, in a `context` header of the new commit. _<commit>_ must be
 	a checkpoint: a commit whose tree holds only a `message` file.
-	See linkgit:git-cs[1].
+	With `commit.requireContext` set, the checkpoint is also pinned
+	in `refs/cs/pins/`. See linkgit:git-cs[1].
 
 Commit Information
 ------------------

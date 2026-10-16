@@ -212,7 +212,9 @@ include::signoff-option.adoc[]
 	existing one unless `--context` replaces it, and while a
 	cherry-pick or rebase is in progress the commit being replayed
 	supplies it. A kept or replayed header that does not name a
-	checkpoint is refused rather than copied.
+	checkpoint is refused rather than copied. With
+	`commit.requireContext` set, the checkpoint is also pinned (see
+	linkgit:git-config[1]).
 	linkgit:git-cherry-pick[1] and linkgit:git-rebase[1] keep the
 	header of every commit they replay; linkgit:git-revert[1] does
 	not. See linkgit:git-cs[1].

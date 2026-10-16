@@ -306,6 +306,14 @@ test_expect_success 'init makes every code commit name its context' '
 	test "$(git cs links --context main)" = "$(git rev-parse HEAD)"
 '
 
+test_expect_success 'a plain git commit --context pins its checkpoint after init' '
+	git cs branch native $base &&
+	ctx=$(git cs commit native -m "native link") &&
+	git commit --allow-empty --context $ctx -m native &&
+	git rev-parse refs/cs/pins/$ctx &&
+	git cs fsck HEAD^..HEAD
+'
+
 test_expect_success 'fsck requires exactly one pinned link per code commit' '
 	git cs fsck code..HEAD &&
 	test_must_fail git cs fsck >out 2>&1 &&

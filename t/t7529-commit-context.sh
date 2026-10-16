@@ -187,6 +187,74 @@ test_expect_success 'revert does not copy the reverted commit context' '
 	test -z "$(context_of HEAD)"
 '
 
+pinned () {
+	git rev-parse -q --verify "refs/cs/pins/$1" >/dev/null
+}
+
+test_expect_success 'no pins are written without commit.requireContext' '
+	git for-each-ref --format="delete %(refname)" refs/cs/pins/ | git update-ref --stdin &&
+	git checkout -b nopin other &&
+	git commit --allow-empty --context $(cat ctx) -m unpinned &&
+	git commit-tree --context $(cat ctx2) -m unpinned HEAD^{tree} &&
+	test -z "$(git for-each-ref refs/cs/)"
+'
+
+test_expect_success 'commit --context pins the checkpoint with commit.requireContext' '
+	test_config commit.requireContext true &&
+	git commit --allow-empty --context $(cat ctx) -m pinned &&
+	pinned $(cat ctx) &&
+	test "$(git rev-parse refs/cs/pins/$(cat ctx))" = "$(cat ctx)"
+'
+
+test_expect_success 'amend pins the context it keeps or replaces' '
+	test_config commit.requireContext true &&
+	git update-ref -d refs/cs/pins/$(cat ctx) &&
+	git commit --amend --allow-empty -m kept &&
+	pinned $(cat ctx) &&
+	git commit --amend --allow-empty --context $(cat ctx2) -m replaced &&
+	pinned $(cat ctx2)
+'
+
+test_expect_success 'commit-tree --context pins with commit.requireContext' '
+	test_config commit.requireContext true &&
+	third=$(checkpoint third) &&
+	git commit-tree --context $third -m plumbing HEAD^{tree} &&
+	pinned $third
+'
+
+test_expect_success 'cherry-pick and rebase pin the contexts they carry' '
+	test_config commit.requireContext true &&
+	git for-each-ref --format="delete %(refname)" refs/cs/pins/ | git update-ref --stdin &&
+	git checkout -b pinpick other &&
+	git cherry-pick topic &&
+	pinned $(cat ctx) &&
+	git update-ref -d refs/cs/pins/$(cat ctx) &&
+	git checkout -b pinrebase topic &&
+	git rebase --force-rebase other &&
+	pinned $(cat ctx)
+'
+
+test_expect_success 'a fixup keeps and pins the link of the commit it amends' '
+	test_config commit.requireContext true &&
+	git checkout -b goodfixup other &&
+	git update-ref -d refs/cs/pins/$(cat ctx2) &&
+	echo fix >fix.t &&
+	git add fix.t &&
+	git commit --fixup HEAD --context $(cat ctx) &&
+	git -c sequence.editor=true rebase -i --autosquash HEAD~2 &&
+	test "$(context_of HEAD)" = "$(cat ctx2)" &&
+	pinned $(cat ctx2)
+'
+
+test_expect_success 'a fixup refuses to keep a link to a non-checkpoint' '
+	git checkout -b badfixup other &&
+	git reset --hard $(relink other $(git rev-parse base)) &&
+	git commit --allow-empty --fixup HEAD --context $(cat ctx) &&
+	test_must_fail git -c sequence.editor=true rebase -i --autosquash base 2>err &&
+	test_grep "context is not a checkpoint" err &&
+	git rebase --abort
+'
+
 test_expect_success 'cherry-pick refuses a commit linked to a non-checkpoint' '
 	git checkout -b badpick other &&
 	bad=$(relink topic $(git rev-parse other)) &&

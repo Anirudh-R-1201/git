@@ -180,7 +180,17 @@ test_expect_success 'merge reports order conflicts and keeps the branch' '
 test_expect_success 'merge fast-forwards unless --no-ff' '
 	git cs branch ff $base &&
 	git cs branch noff $base &&
-	git cs merge ff refs/cs/heads/x &&
+	git cs merge ff refs/cs/heads/x 2>err &&
+	echo Fast-forward >expect &&
+	test_cmp expect err &&
+	git cs merge ff $base 2>err >out &&
+	echo "Already up to date" >expect &&
+	test_cmp expect err &&
+	git rev-parse refs/cs/heads/ff >expect &&
+	test_cmp expect out &&
+	git cs --json merge noff refs/cs/heads/x --no-ff >noff.json &&
+	jq -e ".ok and .note == \"Merge checkpoint\"" noff.json &&
+	git update-ref refs/cs/heads/noff $base &&
 	test "$(git rev-parse refs/cs/heads/ff)" = "$(git rev-parse refs/cs/heads/x)" &&
 	git cs merge noff refs/cs/heads/x --no-ff &&
 	test "$(active refs/cs/heads/noff)" = "[\"m2\",\"m1\"]" &&

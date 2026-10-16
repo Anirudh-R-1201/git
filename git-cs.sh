@@ -268,11 +268,16 @@ cmd_merge () {
 merge_once () {
 	ours=$(git rev-parse --verify "$(ref "$branch")") &&
 	theirs=$(rev "$name") || exit
-	git merge-base --is-ancestor $theirs $ours && return
+	git merge-base --is-ancestor $theirs $ours && {
+		echo >&2 "Already up to date"
+		echo $ours
+		return
+	}
 	if git merge-base --is-ancestor $ours $theirs
 	then
 		test -n "$noff$result" || {
 			git update-ref --create-reflog "$(ref "$branch")" $theirs $ours || stale
+			echo >&2 "Fast-forward"
 			echo $theirs
 			return
 		}
@@ -285,7 +290,8 @@ merge_once () {
 		result="$tmp.merge"
 		cmd_merge_preview $ours $theirs >"$result" || exit
 	}
-	merge=$theirs msg="cs merge $name" cmd_commit "$branch" "$result" --expect $ours
+	merge=$theirs msg="cs merge $name" cmd_commit "$branch" "$result" --expect $ours &&
+	echo >&2 "Merge checkpoint"
 }
 
 cmd_pin () {
@@ -390,5 +396,6 @@ test -n "$json" || { $fn "$@"; exit; }
 out=$($fn "$@" 2>"$tmp.err")
 status=$?
 jq -n --arg out "$out" --rawfile err "$tmp.err" --argjson status $status \
-	'{ok: ($status == 0), output: $out, error: ($err | rtrimstr("\n"))}'
+	'{ok: ($status == 0), output: $out} +
+	if $status == 0 then {note: ($err | rtrimstr("\n"))} else {error: ($err | rtrimstr("\n"))} end'
 exit $status

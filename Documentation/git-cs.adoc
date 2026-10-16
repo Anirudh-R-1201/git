@@ -56,8 +56,9 @@ OPTIONS
 -------
 `--json`::
 	Given before the command, print one JSON object
-	`{"ok": ..., "output": ..., "error": ...}` holding the command's
-	output and error text, for callers that parse results. The exit
+	`{"ok": ..., "output": ...}` holding the command's output, plus
+	`"note"` with its informational messages on success or `"error"`
+	on failure, for callers that parse results. The exit
 	status is unchanged.
 
 PAYLOADS
@@ -138,7 +139,10 @@ commits are refused.
 	Labels never rewrite checkpoints or include their ancestors.
 
 `merge <branch> <checkpoint> [--result <payload>] [--no-ff] [--retry <n>]`::
-	Merge _<checkpoint>_ into _<branch>_. A descendant is
+	Merge _<checkpoint>_ into _<branch>_ and print the resulting
+	tip. The standard error says whether the merge was a
+	`Fast-forward`, created a `Merge checkpoint`, or was
+	`Already up to date`. A descendant is
 	fast-forwarded unless `--no-ff` is given, which records a
 	merge checkpoint holding the incoming view. Divergent
 	histories are merged by ordered union. With `--result`, a merge

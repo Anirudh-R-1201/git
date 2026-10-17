@@ -18,7 +18,7 @@
 SUBDIRECTORY_OK=Yes
 USAGE='init
    or: remote <name>
-   or: commit <branch> (-m <message> | -F <file>) [--kind <kind>] [--code <commit>] [--expect <checkpoint>]
+   or: commit <branch> (-m <message> | -F <file>) [--kind <kind>] [--code <commit>] [--from <name>] [--expect <checkpoint>]
    or: show <checkpoint>
    or: context <checkpoint>
    or: log <checkpoint>
@@ -49,6 +49,11 @@ test "$1" != --help-all || set -- -h
 
 tmp="$GIT_DIR/cs-tmp.$$"
 trap 'rm -f "$tmp".*' 0
+
+# Who records messages: --from, $GIT_CS_FROM, cs.from, or the author name.
+from=${GIT_CS_FROM:-$(git config cs.from)}
+from=${from:-$(git var GIT_AUTHOR_IDENT | sed 's/ <.*//; s/[^A-Za-z0-9._-]/-/g')}
+code= retracts=
 
 # A conditional update lost a race; callers may retry on this exit status.
 stale () {
@@ -91,20 +96,25 @@ new_id () {
 	die "cannot generate a message id"
 }
 
-# Write the typed message: kind, optional code commit, optional retracted id, body.
+# Write a typed message of kind $1 with body $2, a new id, and the fields set in
+# $from, $code and $retracts (a message id).
 write_message () {
 	case "$1" in
 	""|*[!a-z0-9-]*) die "invalid kind: $1" ;;
 	esac
-	test -n "$4" || die "empty message"
+	case "$from" in
+	""|*[!A-Za-z0-9._-]*) die "invalid sender: $from" ;;
+	esac
+	test -n "$2" || die "empty message"
 	msg_id=$(new_id) || exit
 	{
 		echo "kind: $1"
 		echo "id: $msg_id"
-		test -z "$2" || echo "code: $2"
-		test -z "$3" || echo "retracts: $3"
+		echo "from: $from"
+		test -z "$code" || echo "code: $code"
+		test -z "$retracts" || echo "retracts: $retracts"
 		echo
-		printf '%s\n' "$4"
+		printf '%s\n' "$2"
 	} >"$tmp.msg"
 }
 
@@ -117,7 +127,7 @@ checkpoint () {
 	done
 	subject=$(sed -n '/^$/{n;p;q;}' "$tmp.msg")
 	tree=$(printf '100644 blob %s\tmessage\n' "$(git hash-object -w "$tmp.msg")" | git mktree) &&
-	git commit-tree $tree $parents -m "$(sed -n '1s/^kind: //p' "$tmp.msg"): $subject"
+	GIT_AUTHOR_NAME=$from git commit-tree $tree $parents -m "$(sed -n '1s/^kind: //p' "$tmp.msg"): $subject"
 }
 
 # Read the messages of the given revisions in one pass and print them per mode:
@@ -170,7 +180,7 @@ read_messages () {
 			} else {
 				mid = val[id, "id"] != "" ? val[id, "id"] : id
 				if (kind != "merge" && kind != "retract" && !hidden[mid] && !shown[mid]++)
-					print substr(id, 1, 10) " " kind ": " body[id]
+					print substr(id, 1, 10) " " val[id, "from"] " " kind ": " body[id]
 			}
 		}
 	}'
@@ -205,6 +215,7 @@ cmd_commit () {
 		-F) message=$(cat "$2") || exit; shift ;;
 		--kind) kind=$2; shift ;;
 		--code) code=$2; shift ;;
+		--from) from=$2; shift ;;
 		--expect) expect=$2; shift ;;
 		*) usage ;;
 		esac
@@ -223,7 +234,7 @@ cmd_commit () {
 		expect=$(rev "$expect") || exit
 	fi
 	tip=$(git rev-parse -q --verify "$(ref "$branch")")
-	write_message "$kind" "$code" "" "$message"
+	write_message "$kind" "$message"
 	commit=$(checkpoint $tip) || exit
 	git update-ref --create-reflog "$(ref "$branch")" $commit "${expect:-$tip}" 2>/dev/null || stale
 	echo $commit
@@ -243,7 +254,7 @@ cmd_context () {
 
 cmd_log () {
 	c=$(rev "$1") || exit
-	git log --date=short --format='%h %ad %s' $c
+	git log --date=short --format='%h %ad %an %s' $c
 }
 
 cmd_diff () {
@@ -339,9 +350,9 @@ cmd_revert () {
 	case "$(field $c kind)" in
 	merge|retract) die "cannot retract a $(field $c kind) checkpoint: $2" ;;
 	esac
-	id=$(field $c id)
-	test -n "$id" || die "checkpoint has no id: $2"
-	write_message retract "" $id "Retract: $(git log -1 --format=%s $c)"
+	retracts=$(field $c id)
+	test -n "$retracts" || die "checkpoint has no id: $2"
+	write_message retract "Retract: $(git log -1 --format=%s $c)"
 	new=$(checkpoint $old) || exit
 	git update-ref --create-reflog "$(ref "$1")" $new $old 2>/dev/null || stale
 	echo $new
@@ -386,7 +397,7 @@ merge_once () {
 		echo $theirs
 		return
 	}
-	write_message merge "" "" "${message:-Merge $name}"
+	write_message merge "${message:-Merge $name}"
 	new=$(checkpoint $ours $theirs) || exit
 	git update-ref --create-reflog "$(ref "$branch")" $new $ours 2>/dev/null || stale
 	echo >&2 "Merge checkpoint"

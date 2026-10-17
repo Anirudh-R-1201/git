@@ -27,7 +27,7 @@ test_expect_success 'commit -m stores one typed message without touching code' '
 	git cs show $base | sed -n 2p >id &&
 	test_grep "^id: [0-9a-f]\{32\}\$" id &&
 	show_without_id $base >actual &&
-	printf "kind: message\n\nInvestigate SQLite\n" >expect &&
+	printf "kind: message\nfrom: A-U-Thor\n\nInvestigate SQLite\n" >expect &&
 	test_cmp expect actual
 '
 
@@ -37,6 +37,7 @@ test_expect_success 'commit takes a kind, an optional code commit and a message 
 	show_without_id $two >actual &&
 	{
 		echo "kind: learning" &&
+		echo "from: A-U-Thor" &&
 		echo "code: $(git rev-parse HEAD)" &&
 		echo &&
 		cat msg
@@ -82,8 +83,22 @@ test_expect_success 'commit --expect accepts a context branch name' '
 	test_expect_code 75 git cs commit exp -m stale --expect main
 '
 
+test_expect_success 'messages record who sent them' '
+	git cs branch who main &&
+	git cs commit who -m one --from alpha &&
+	GIT_CS_FROM=beta git cs commit who -m two &&
+	test_config cs.from gamma &&
+	git cs commit who -m three &&
+	test_must_fail git cs commit who -m bad --from "has space" &&
+	git cs context who | tail -n 3 | cut -d " " -f 2 >actual &&
+	printf "alpha\nbeta\ngamma\n" >expect &&
+	test_cmp expect actual &&
+	git cs log who | head -n 1 >top &&
+	test_grep " gamma message: three$" top
+'
+
 test_expect_success 'context lists every message oldest first' '
-	git cs context main | sed "s/^[0-9a-f]* //" >actual &&
+	git cs context main | sed "s/^[0-9a-f]* [^ ]* //" >actual &&
 	cat >expect <<-\EOF &&
 	message: Investigate SQLite
 	learning: Use WAL mode
@@ -165,7 +180,7 @@ test_expect_success 'merge fast-forwards, reports up to date, or records a merge
 	test_cmp expect err &&
 	test "$(kind_of $m)" = merge &&
 	git rev-parse $m^2 &&
-	git cs context a | sed "s/^[0-9a-f]* //" | sort >actual &&
+	git cs context a | sed "s/^[0-9a-f]* [^ ]* //" | sort >actual &&
 	printf "message: Investigate SQLite\nmessage: from a\nmessage: from b\n" >expect &&
 	test_cmp expect actual
 '
@@ -195,7 +210,7 @@ test_expect_success 'merge --retry lets parallel publishers all land' '
 		git cs commit "pub$i" -m "p$i" || return 1
 	done &&
 	publish_in_parallel &&
-	git cs context shared | sed "s/^[0-9a-f]* message: //" | grep "^p" | sort >actual &&
+	git cs context shared | sed "s/^[0-9a-f]* [^ ]* message: //" | grep "^p" | sort >actual &&
 	printf "p1\np2\np3\np4\np5\np6\n" >expect &&
 	test_cmp expect actual
 '
@@ -208,7 +223,7 @@ test_expect_success 'rebase replays messages onto the new base and keeps the old
 	git cs rebase topic b &&
 	git merge-base --is-ancestor refs/cs/heads/b refs/cs/heads/topic &&
 	test "$(git rev-parse refs/cs/recovery/topic)" = $old &&
-	git cs context topic | sed "s/^[0-9a-f]* message: //" >actual &&
+	git cs context topic | sed "s/^[0-9a-f]* [^ ]* message: //" >actual &&
 	printf "Investigate SQLite\nfrom b\nt1\nt2\n" >expect &&
 	test_cmp expect actual &&
 	test_must_fail git cs rebase a topic 2>err &&
@@ -293,12 +308,12 @@ test_expect_success 'rebase onto included or newer context does not rewrite' '
 test_expect_success 'cherry-pick copies one message and revert retracts it' '
 	git cs branch pick $base &&
 	git cs cherry-pick pick topic &&
-	git cs context pick | sed "s/^[0-9a-f]* message: //" >actual &&
+	git cs context pick | sed "s/^[0-9a-f]* [^ ]* message: //" >actual &&
 	printf "Investigate SQLite\nt2\n" >expect &&
 	test_cmp expect actual &&
 	git cs revert pick pick &&
 	test "$(kind_of pick)" = retract &&
-	git cs context pick | sed "s/^[0-9a-f]* message: //" >actual &&
+	git cs context pick | sed "s/^[0-9a-f]* [^ ]* message: //" >actual &&
 	echo "Investigate SQLite" >expect &&
 	test_cmp expect actual
 '

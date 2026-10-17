@@ -10,7 +10,7 @@ SYNOPSIS
 [synopsis]
 git cs init
 git cs remote <name>
-git cs commit <branch> (-m <message> | -F <file>) [--kind <kind>] [--code <commit>] [--expect <checkpoint>]
+git cs commit <branch> (-m <message> | -F <file>) [--kind <kind>] [--code <commit>] [--from <name>] [--expect <checkpoint>]
 git cs show <checkpoint>
 git cs context <checkpoint>
 git cs log <checkpoint>
@@ -48,16 +48,17 @@ A checkpoint is a commit whose tree holds a single file, `message`:
 ------------
 kind: learning
 id: 3f9c0b2e5d8a4c71b6e0f2a9d4c8b1e7
+from: alpha
 code: <commit>
 
 Use WAL mode; readers must not block writers.
 ------------
 
-`kind` names what the message is. `id` is a random identifier given to
-the message when it is recorded and kept by every copy that
-`cherry-pick`, `rebase` or `merge` makes, so copies of one message are
-the same message. `code` optionally names the code commit the message
-was captured against. The body follows the blank line. The
+`kind` names what the message is and `from` who recorded it. `id` is a
+random identifier given to the message when it is recorded and kept by
+every copy that `cherry-pick`, `rebase` or `merge` makes, so copies of one
+message are the same message. `code` optionally names the code commit the
+message was captured against. The body follows the blank line. The
 context at a checkpoint is the checkpoint together with its ancestors.
 
 The two histories are linked in one direction each:
@@ -89,11 +90,14 @@ COMMANDS
 	`refs/cs/remotes/<name>/`), pins, tags and labels. Running it again
 	adds nothing.
 
-`commit <branch> (-m <message> | -F <file>) [--kind <kind>] [--code <commit>] [--expect <checkpoint>]`::
+`commit <branch> (-m <message> | -F <file>) [--kind <kind>] [--code <commit>] [--from <name>] [--expect <checkpoint>]`::
 	Record a message as a new checkpoint on top of _<branch>_,
 	creating the branch if needed, and print its ID. _<kind>_
 	(default `message`) uses lowercase letters, digits and `-`;
 	`merge` and `retract` are reserved for `merge` and `revert`.
+	The sender is _<name>_, else `$GIT_CS_FROM`, else `cs.from`, else
+	the author name, with characters other than letters, digits,
+	`.`, `_` and `-` replaced by `-`.
 	The checkpoint's subject is `<kind>: <first line>`. With
 	`--expect`, refuse with exactly `STALE_TIP` on standard error
 	(exit status 75) unless the branch is still at _<checkpoint>_,
@@ -104,14 +108,14 @@ COMMANDS
 
 `context <checkpoint>`::
 	Print every message leading to _<checkpoint>_, oldest first, as
-	`<checkpoint> <kind>: <body>`. A message that arrived more than
+	`<checkpoint> <from> <kind>: <body>`. A message that arrived more than
 	once, such as by both a cherry-pick and a merge, is printed once,
 	where it first appears. Merge checkpoints, retractions and every
 	copy of the messages they retract are left out.
 
 `log <checkpoint>`::
 	List the checkpoints leading to _<checkpoint>_, newest first, with
-	their dates and subjects.
+	their dates, senders and subjects.
 
 `diff <checkpoint> <checkpoint>`::
 	List the checkpoints only the first side has (`-`) and only the

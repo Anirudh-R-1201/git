@@ -146,7 +146,10 @@ COMMANDS
 `rebase <branch> <onto>`::
 	Copy each checkpoint of _<branch>_ that _<onto>_ lacks on top of
 	it, keeping each message, and save the old tip as for `reset`.
-	Merge checkpoints are refused.
+	Merge checkpoints are refused. A branch that already contains
+	_<onto>_ is left alone (`Already up to date`), and one that
+	_<onto>_ contains is fast-forwarded, so polling never rewrites
+	checkpoints.
 
 `cherry-pick <branch> <checkpoint>`::
 	Copy the message of _<checkpoint>_ onto _<branch>_.

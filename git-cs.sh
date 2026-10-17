@@ -253,6 +253,18 @@ replay () {
 cmd_rebase () {
 	old=$(git rev-parse --verify "$(ref "$1")") &&
 	new=$(rev "$2") || exit
+	if git merge-base --is-ancestor $new $old
+	then
+		echo >&2 "Already up to date"
+		echo $old
+		return
+	elif git merge-base --is-ancestor $old $new
+	then
+		git update-ref --create-reflog "$(ref "$1")" $new $old 2>/dev/null || stale
+		echo >&2 "Fast-forward"
+		echo $new
+		return
+	fi
 	test -z "$(git rev-list --min-parents=2 $new..$old)" || die "cannot replay merge checkpoints"
 	for c in $(git rev-list --reverse $new..$old)
 	do

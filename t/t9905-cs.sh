@@ -211,7 +211,7 @@ test_expect_success 'rebase replays messages onto the new base and keeps the old
 	git cs context topic | sed "s/^[0-9a-f]* message: //" >actual &&
 	printf "Investigate SQLite\nfrom b\nt1\nt2\n" >expect &&
 	test_cmp expect actual &&
-	test_must_fail git cs rebase a $base 2>err &&
+	test_must_fail git cs rebase a topic 2>err &&
 	test_grep "cannot replay merge checkpoints" err
 '
 
@@ -275,6 +275,19 @@ test_expect_success 'revert refuses merge and retract checkpoints' '
 	test_grep "cannot retract a retract checkpoint" err &&
 	test_must_fail git cs revert id-merge id-merge 2>err &&
 	test_grep "cannot retract a merge checkpoint" err
+'
+
+test_expect_success 'rebase onto included or newer context does not rewrite' '
+	tip=$(git rev-parse refs/cs/heads/topic) &&
+	git cs rebase topic b 2>err &&
+	echo "Already up to date" >expect &&
+	test_cmp expect err &&
+	test "$(git rev-parse refs/cs/heads/topic)" = $tip &&
+	git cs branch behind $base &&
+	git cs rebase behind b 2>err &&
+	echo Fast-forward >expect &&
+	test_cmp expect err &&
+	test "$(git rev-parse refs/cs/heads/behind)" = "$(git rev-parse refs/cs/heads/b)"
 '
 
 test_expect_success 'cherry-pick copies one message and revert retracts it' '

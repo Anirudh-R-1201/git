@@ -404,6 +404,25 @@ test_expect_success 'push and fetch carry context to a fresh receiver' '
 	git -C rx rev-parse refs/cs/remotes/origin/a refs/cs/tags/v1
 '
 
+test_expect_success 'remote lets plain fetch and pull bring context' '
+	git clone hub.git rx2 &&
+	test_must_fail git -C rx2 rev-parse -q --verify refs/cs/remotes/origin/a &&
+	git -C rx2 cs remote origin &&
+	git -C rx2 cs remote origin &&
+	git -C rx2 config --get-all remote.origin.fetch >specs &&
+	test_line_count = 5 specs &&
+	git -C rx2 pull &&
+	git -C rx2 rev-parse refs/cs/remotes/origin/a refs/cs/tags/v1 &&
+	git -C rx2 cs show "$(git -C rx2 cs links --code HEAD)"
+'
+
+test_expect_success 'init sets up every configured remote' '
+	git clone hub.git rx3 &&
+	git -C rx3 cs init &&
+	git -C rx3 fetch &&
+	git -C rx3 rev-parse refs/cs/remotes/origin/a
+'
+
 test_expect_success 'push is atomic across code and context' '
 	git push -f hub.git "$(git commit-tree HEAD^{tree} -m other)":refs/heads/master &&
 	before=$(git -C hub.git rev-parse refs/cs/heads/a) &&

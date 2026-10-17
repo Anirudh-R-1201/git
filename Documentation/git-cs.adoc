@@ -9,6 +9,7 @@ SYNOPSIS
 --------
 [synopsis]
 git cs init
+git cs remote <name>
 git cs commit <branch> (-m <message> | -F <file>) [--kind <kind>] [--code <commit>] [--expect <checkpoint>]
 git cs show <checkpoint>
 git cs context <checkpoint>
@@ -79,8 +80,14 @@ COMMANDS
 --------
 `init`::
 	Set `commit.requireContext` so that `git commit` refuses code
-	commits that do not name their context, and pins the checkpoint
-	of every one that does.
+	commits that do not name their context, pins the checkpoint of
+	every one that does, and run `remote` for every configured remote.
+
+`remote <name>`::
+	Add fetch refspecs to remote _<name>_ so that ordinary
+	`git fetch` and `git pull` also bring its context branches (into
+	`refs/cs/remotes/<name>/`), pins, tags and labels. Running it again
+	adds nothing.
 
 `commit <branch> (-m <message> | -F <file>) [--kind <kind>] [--code <commit>] [--expect <checkpoint>]`::
 	Record a message as a new checkpoint on top of _<branch>_,

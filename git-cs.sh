@@ -17,6 +17,7 @@
 
 SUBDIRECTORY_OK=Yes
 USAGE='init
+   or: remote <name>
    or: commit <branch> (-m <message> | -F <file>) [--kind <kind>] [--code <commit>] [--expect <checkpoint>]
    or: show <checkpoint>
    or: context <checkpoint>
@@ -176,7 +177,22 @@ read_messages () {
 }
 
 cmd_init () {
-	git config commit.requireContext true
+	git config commit.requireContext true &&
+	for r in $(git remote)
+	do
+		cmd_remote $r || exit
+	done
+}
+
+# Make ordinary fetches and pulls from <name> bring context along.
+cmd_remote () {
+	git remote get-url "$1" >/dev/null || exit
+	for spec in "+refs/cs/heads/*:refs/cs/remotes/$1/*" "refs/cs/pins/*:refs/cs/pins/*" \
+		"refs/cs/tags/*:refs/cs/tags/*" "refs/cs/labels/*:refs/cs/labels/*"
+	do
+		git config --get-all remote."$1".fetch | grep -qxF "$spec" ||
+		git config --add remote."$1".fetch "$spec" || exit
+	done
 }
 
 cmd_commit () {
@@ -480,7 +496,7 @@ cmd_bundle () {
 cmd=$1
 shift
 case "$cmd" in
-init|commit|show|context|log|diff|branch|switch|reset|reflog|tag|label|merge|rebase|\
+init|remote|commit|show|context|log|diff|branch|switch|reset|reflog|tag|label|merge|rebase|\
 cherry-pick|revert|pin|unpin|commit-code|fsck|links|push|fetch|bundle)
 	cmd_$(echo "$cmd" | tr - _) "$@" ;;
 *)

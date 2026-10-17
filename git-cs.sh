@@ -18,7 +18,7 @@
 SUBDIRECTORY_OK=Yes
 USAGE='init
    or: remote <name>
-   or: commit <branch> (-m <message> | -F <file>) [--kind <kind>] [--code <commit>] [--from <name>] [--expect <checkpoint>]
+   or: commit <branch> (-m <message> | -F <file>) [--kind <kind>] [--code <commit>] [--from <name>] [--supersedes <checkpoint>] [--expect <checkpoint>]
    or: show <checkpoint>
    or: context <checkpoint> [--since <checkpoint>] [--last <n>] [--kind <kinds>] [--from <names>]
    or: log <checkpoint>
@@ -53,7 +53,7 @@ trap 'rm -f "$tmp".*' 0
 # Who records messages: --from, $GIT_CS_FROM, cs.from, or the author name.
 from=${GIT_CS_FROM:-$(git config cs.from)}
 from=${from:-$(git var GIT_AUTHOR_IDENT | sed 's/ <.*//; s/[^A-Za-z0-9._-]/-/g')}
-code= retracts=
+code= retracts= supersedes=
 
 # A conditional update lost a race; callers may retry on this exit status.
 stale () {
@@ -97,7 +97,7 @@ new_id () {
 }
 
 # Write a typed message of kind $1 with body $2, a new id, and the fields set in
-# $from, $code and $retracts (a message id).
+# $from, $code, $retracts and $supersedes (message ids).
 write_message () {
 	case "$1" in
 	""|*[!a-z0-9-]*) die "invalid kind: $1" ;;
@@ -113,6 +113,7 @@ write_message () {
 		echo "from: $from"
 		test -z "$code" || echo "code: $code"
 		test -z "$retracts" || echo "retracts: $retracts"
+		test -z "$supersedes" || echo "supersedes: $supersedes"
 		echo
 		printf '%s\n' "$2"
 	} >"$tmp.msg"
@@ -147,7 +148,7 @@ read_messages () {
 			h = index(line[i], ": ")
 			key = substr(line[i], 1, h - 1)
 			val[id, key] = substr(line[i], h + 2)
-			if (key == "retracts")
+			if (key == "retracts" || key == "supersedes")
 				hidden[val[id, key]] = 1
 		}
 		body[id] = line[i + 1]
@@ -223,6 +224,11 @@ cmd_commit () {
 		--kind) kind=$2; shift ;;
 		--code) code=$2; shift ;;
 		--from) from=$2; shift ;;
+		--supersedes)
+			supersedes=$(rev "$2") &&
+			supersedes=$(field $supersedes id) || exit
+			test -n "$supersedes" || die "checkpoint has no id: $2"
+			shift ;;
 		--expect) expect=$2; shift ;;
 		*) usage ;;
 		esac

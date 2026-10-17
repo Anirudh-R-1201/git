@@ -10,7 +10,7 @@ SYNOPSIS
 [synopsis]
 git cs init
 git cs remote <name>
-git cs commit <branch> (-m <message> | -F <file>) [--kind <kind>] [--code <commit>] [--from <name>] [--expect <checkpoint>]
+git cs commit <branch> (-m <message> | -F <file>) [--kind <kind>] [--code <commit>] [--from <name>] [--supersedes <checkpoint>] [--expect <checkpoint>]
 git cs show <checkpoint>
 git cs context <checkpoint> [--since <checkpoint>] [--last <n>] [--kind <kinds>] [--from <names>]
 git cs log <checkpoint>
@@ -90,14 +90,17 @@ COMMANDS
 	`refs/cs/remotes/<name>/`), pins, tags and labels. Running it again
 	adds nothing.
 
-`commit <branch> (-m <message> | -F <file>) [--kind <kind>] [--code <commit>] [--from <name>] [--expect <checkpoint>]`::
+`commit <branch> (-m <message> | -F <file>) [--kind <kind>] [--code <commit>] [--from <name>] [--supersedes <checkpoint>] [--expect <checkpoint>]`::
 	Record a message as a new checkpoint on top of _<branch>_,
 	creating the branch if needed, and print its ID. _<kind>_
 	(default `message`) uses lowercase letters, digits and `-`;
 	`merge` and `retract` are reserved for `merge` and `revert`.
 	The sender is _<name>_, else `$GIT_CS_FROM`, else `cs.from`, else
 	the author name, with characters other than letters, digits,
-	`.`, `_` and `-` replaced by `-`.
+	`.`, `_` and `-` replaced by `-`. `--supersedes` records that the
+	message replaces _<checkpoint>_, for example a correction or the
+	resolution of two contradicting notes; `context` then shows only
+	the new message.
 	The checkpoint's subject is `<kind>: <first line>`. With
 	`--expect`, refuse with exactly `STALE_TIP` on standard error
 	(exit status 75) unless the branch is still at _<checkpoint>_,
@@ -110,8 +113,8 @@ COMMANDS
 	Print every message leading to _<checkpoint>_, oldest first, as
 	`<checkpoint> <from> <kind>: <body>`. A message that arrived more than
 	once, such as by both a cherry-pick and a merge, is printed once,
-	where it first appears. Merge checkpoints, retractions and every
-	copy of the messages they retract are left out.
+	where it first appears. Merge checkpoints, retractions, and every
+	copy of the messages that were retracted or superseded are left out.
 	`--since` leaves out messages the given checkpoint already has,
 	`--kind` and `--from` keep only the comma-separated kinds or
 	senders, and `--last` keeps the last _<n>_ of what remains.

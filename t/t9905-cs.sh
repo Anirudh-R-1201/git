@@ -124,6 +124,24 @@ test_expect_success 'context narrows by --since, --last, --kind and --from' '
 	test_cmp expect actual
 '
 
+test_expect_success 'a superseding message replaces the old one in context' '
+	git cs branch claims $base &&
+	git cs branch rival $base &&
+	path=$(git cs commit claims -m "store a path") &&
+	git cs commit rival -m "store a URI" &&
+	git cs merge claims rival &&
+	git cs commit claims -m "store a URI; paths break on Windows" --kind decision --supersedes $path &&
+	git cs show claims >msg &&
+	test_grep "^supersedes: $(git cs show $path | sed -n "s/^id: //p")$" msg &&
+	git cs context claims | cut -d " " -f 3- >actual &&
+	cat >expect <<-\EOF &&
+	message: Investigate SQLite
+	message: store a URI
+	decision: store a URI; paths break on Windows
+	EOF
+	test_cmp expect actual
+'
+
 test_expect_success 'log shows one line per checkpoint' '
 	git cs log main >log &&
 	test_line_count = 3 log &&

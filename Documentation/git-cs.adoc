@@ -89,7 +89,8 @@ COMMANDS
 	`merge` and `retract` are reserved for `merge` and `revert`.
 	The checkpoint's subject is `<kind>: <first line>`. With
 	`--expect`, refuse with exactly `STALE_TIP` on standard error
-	(exit status 75) unless the branch is still at _<checkpoint>_.
+	(exit status 75) unless the branch is still at _<checkpoint>_,
+	which may be given as a context branch name.
 
 `show <checkpoint>`::
 	Print the typed message stored in _<checkpoint>_.

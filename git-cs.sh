@@ -150,6 +150,10 @@ cmd_commit () {
 	then
 		code=$(git rev-parse -q --verify "$code^{commit}") || die "not a commit: $code"
 	fi
+	if test -n "$expect"
+	then
+		expect=$(rev "$expect") || exit
+	fi
 	tip=$(git rev-parse -q --verify "$(ref "$branch")")
 	write_message "$kind" "$code" "" "$message"
 	commit=$(checkpoint $tip) || exit

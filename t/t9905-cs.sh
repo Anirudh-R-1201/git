@@ -76,6 +76,12 @@ test_expect_success 'commit refuses a stale expected tip with exit 75' '
 	test_cmp expect err
 '
 
+test_expect_success 'commit --expect accepts a context branch name' '
+	git cs branch exp main &&
+	git cs commit exp -m by-name --expect exp &&
+	test_expect_code 75 git cs commit exp -m stale --expect main
+'
+
 test_expect_success 'context lists every message oldest first' '
 	git cs context main | sed "s/^[0-9a-f]* //" >actual &&
 	cat >expect <<-\EOF &&

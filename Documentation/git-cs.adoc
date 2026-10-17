@@ -12,7 +12,7 @@ git cs init
 git cs remote <name>
 git cs commit <branch> (-m <message> | -F <file>) [--kind <kind>] [--code <commit>] [--from <name>] [--expect <checkpoint>]
 git cs show <checkpoint>
-git cs context <checkpoint>
+git cs context <checkpoint> [--since <checkpoint>] [--last <n>] [--kind <kinds>] [--from <names>]
 git cs log <checkpoint>
 git cs diff <checkpoint> <checkpoint>
 git cs branch <name> <checkpoint>
@@ -106,12 +106,15 @@ COMMANDS
 `show <checkpoint>`::
 	Print the typed message stored in _<checkpoint>_.
 
-`context <checkpoint>`::
+`context <checkpoint> [--since <checkpoint>] [--last <n>] [--kind <kinds>] [--from <names>]`::
 	Print every message leading to _<checkpoint>_, oldest first, as
 	`<checkpoint> <from> <kind>: <body>`. A message that arrived more than
 	once, such as by both a cherry-pick and a merge, is printed once,
 	where it first appears. Merge checkpoints, retractions and every
 	copy of the messages they retract are left out.
+	`--since` leaves out messages the given checkpoint already has,
+	`--kind` and `--from` keep only the comma-separated kinds or
+	senders, and `--last` keeps the last _<n>_ of what remains.
 
 `log <checkpoint>`::
 	List the checkpoints leading to _<checkpoint>_, newest first, with

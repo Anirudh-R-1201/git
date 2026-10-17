@@ -109,6 +109,21 @@ test_expect_success 'context lists every message oldest first' '
 	test_cmp expect actual
 '
 
+test_expect_success 'context narrows by --since, --last, --kind and --from' '
+	git cs context who --since main | cut -d " " -f 2- >actual &&
+	printf "alpha message: one\nbeta message: two\ngamma message: three\n" >expect &&
+	test_cmp expect actual &&
+	git cs context who --last 2 | cut -d " " -f 2- >actual &&
+	printf "beta message: two\ngamma message: three\n" >expect &&
+	test_cmp expect actual &&
+	git cs context who --from alpha,gamma | cut -d " " -f 2- >actual &&
+	printf "alpha message: one\ngamma message: three\n" >expect &&
+	test_cmp expect actual &&
+	git cs context who --kind learning | head -n 1 | cut -d " " -f 3- >actual &&
+	echo "learning: Use WAL mode" >expect &&
+	test_cmp expect actual
+'
+
 test_expect_success 'log shows one line per checkpoint' '
 	git cs log main >log &&
 	test_line_count = 3 log &&

@@ -20,7 +20,7 @@ USAGE='init
    or: remote <name>
    or: commit <branch> (-m <message> | -F <file>) [--kind <kind>] [--code <commit>] [--from <name>] [--expect <checkpoint>]
    or: show <checkpoint>
-   or: context <checkpoint>
+   or: context <checkpoint> [--since <checkpoint>] [--last <n>] [--kind <kinds>] [--from <names>]
    or: log <checkpoint>
    or: diff <checkpoint> <checkpoint>
    or: branch <name> <checkpoint>
@@ -132,14 +132,15 @@ checkpoint () {
 
 # Read the messages of the given revisions in one pass and print them per mode:
 # "context" prints visible messages oldest first, once per message id and without
-# retracted ones; "codes" prints "<checkpoint> <code>".
+# retracted ones, keeping only the last $f_last of those matching the comma lists
+# $f_kind and $f_from; "codes" prints "<checkpoint> <code>".
 read_messages () {
 	mode=$1
 	shift
 	git rev-list --reverse --topo-order "$@" |
 	sed 's/.*/&:message &/' |
 	git cat-file --batch='%(objectsize) %(rest)' |
-	LC_ALL=C awk -v mode="$mode" '
+	LC_ALL=C awk -v mode="$mode" -v kinds="$f_kind" -v froms="$f_from" -v last="$f_last" '
 	function add(id, text,    n, line, i, h, key) {
 		n = split(text, line, "\n")
 		for (i = 1; i < n && line[i] != ""; i++) {
@@ -170,6 +171,9 @@ read_messages () {
 			skip = 1
 		}
 	}
+	function wanted(list, item) {
+		return list == "" || index("," list ",", "," item ",")
+	}
 	END {
 		for (i = 0; i < count; i++) {
 			id = order[i]
@@ -179,10 +183,13 @@ read_messages () {
 					print id, val[id, "code"]
 			} else {
 				mid = val[id, "id"] != "" ? val[id, "id"] : id
-				if (kind != "merge" && kind != "retract" && !hidden[mid] && !shown[mid]++)
-					print substr(id, 1, 10) " " val[id, "from"] " " kind ": " body[id]
+				if (kind != "merge" && kind != "retract" && !hidden[mid] && !shown[mid]++ &&
+				    wanted(kinds, kind) && wanted(froms, val[id, "from"]))
+					out[nout++] = substr(id, 1, 10) " " val[id, "from"] " " kind ": " body[id]
 			}
 		}
+		for (i = last == "" || nout < last ? 0 : nout - last; i < nout; i++)
+			print out[i]
 	}'
 }
 
@@ -249,7 +256,20 @@ cmd_show () {
 # merges, retractions and the messages they retract.
 cmd_context () {
 	c=$(rev "$1") || exit
-	read_messages context $c
+	shift
+	since= f_kind= f_from= f_last=
+	while test $# -gt 0
+	do
+		case "$1" in
+		--since) since=$(rev "$2") || exit; shift ;;
+		--last) f_last=$2; shift ;;
+		--kind) f_kind=$2; shift ;;
+		--from) f_from=$2; shift ;;
+		*) usage ;;
+		esac
+		shift
+	done
+	read_messages context $c ${since:+^$since}
 }
 
 cmd_log () {

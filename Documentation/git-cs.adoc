@@ -10,9 +10,9 @@ SYNOPSIS
 [synopsis]
 git cs init
 git cs remote <name>
-git cs commit <branch> (-m <message> | -F <file>) [--kind <kind>] [--code <commit>] [--from <name>] [--supersedes <checkpoint>] [--expect <checkpoint>]
+git cs commit <branch> (-m <message> | -F <file>) [--kind <kind>] [--code <commit>] [--from <name>] [--supersedes <checkpoint>] [--path <path>]... [--expect <checkpoint>]
 git cs show <checkpoint>
-git cs context <checkpoint> [--since <checkpoint>] [--last <n>] [--kind <kinds>] [--from <names>]
+git cs context <checkpoint> [--since <checkpoint>] [--last <n>] [--kind <kinds>] [--from <names>] [--path <path>]
 git cs log <checkpoint>
 git cs diff <checkpoint> <checkpoint>
 git cs branch <name> <checkpoint>
@@ -58,7 +58,8 @@ Use WAL mode; readers must not block writers.
 random identifier given to the message when it is recorded and kept by
 every copy that `cherry-pick`, `rebase` or `merge` makes, so copies of one
 message are the same message. `code` optionally names the code commit the
-message was captured against. The body follows the blank line. The
+message was captured against, and any number of `path` fields name the
+files or directories it is about. The body follows the blank line. The
 context at a checkpoint is the checkpoint together with its ancestors.
 
 The two histories are linked in one direction each:
@@ -90,7 +91,7 @@ COMMANDS
 	`refs/cs/remotes/<name>/`), pins, tags and labels. Running it again
 	adds nothing.
 
-`commit <branch> (-m <message> | -F <file>) [--kind <kind>] [--code <commit>] [--from <name>] [--supersedes <checkpoint>] [--expect <checkpoint>]`::
+`commit <branch> (-m <message> | -F <file>) [--kind <kind>] [--code <commit>] [--from <name>] [--supersedes <checkpoint>] [--path <path>]... [--expect <checkpoint>]`::
 	Record a message as a new checkpoint on top of _<branch>_,
 	creating the branch if needed, and print its ID. _<kind>_
 	(default `message`) uses lowercase letters, digits and `-`;
@@ -100,7 +101,8 @@ COMMANDS
 	`.`, `_` and `-` replaced by `-`. `--supersedes` records that the
 	message replaces _<checkpoint>_, for example a correction or the
 	resolution of two contradicting notes; `context` then shows only
-	the new message.
+	the new message. Each `--path` names a file or directory the
+	message is about.
 	The checkpoint's subject is `<kind>: <first line>`. With
 	`--expect`, refuse with exactly `STALE_TIP` on standard error
 	(exit status 75) unless the branch is still at _<checkpoint>_,
@@ -109,7 +111,7 @@ COMMANDS
 `show <checkpoint>`::
 	Print the typed message stored in _<checkpoint>_.
 
-`context <checkpoint> [--since <checkpoint>] [--last <n>] [--kind <kinds>] [--from <names>]`::
+`context <checkpoint> [--since <checkpoint>] [--last <n>] [--kind <kinds>] [--from <names>] [--path <path>]`::
 	Print every message leading to _<checkpoint>_, oldest first, as
 	`<checkpoint> <from> <kind>: <body>`. A message that arrived more than
 	once, such as by both a cherry-pick and a merge, is printed once,
@@ -117,7 +119,9 @@ COMMANDS
 	copy of the messages that were retracted or superseded are left out.
 	`--since` leaves out messages the given checkpoint already has,
 	`--kind` and `--from` keep only the comma-separated kinds or
-	senders, and `--last` keeps the last _<n>_ of what remains.
+	senders, `--path` keeps messages about _<path>_, a directory
+	containing it, or a file inside it, along with messages that name
+	no path, and `--last` keeps the last _<n>_ of what remains.
 
 `log <checkpoint>`::
 	List the checkpoints leading to _<checkpoint>_, newest first, with

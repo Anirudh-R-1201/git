@@ -18,9 +18,9 @@
 SUBDIRECTORY_OK=Yes
 USAGE='init
    or: remote <name>
-   or: commit <branch> (-m <message> | -F <file>) [--kind <kind>] [--code <commit>] [--from <name>] [--supersedes <checkpoint>] [--expect <checkpoint>]
+   or: commit <branch> (-m <message> | -F <file>) [--kind <kind>] [--code <commit>] [--from <name>] [--supersedes <checkpoint>] [--path <path>]... [--expect <checkpoint>]
    or: show <checkpoint>
-   or: context <checkpoint> [--since <checkpoint>] [--last <n>] [--kind <kinds>] [--from <names>]
+   or: context <checkpoint> [--since <checkpoint>] [--last <n>] [--kind <kinds>] [--from <names>] [--path <path>]
    or: log <checkpoint>
    or: diff <checkpoint> <checkpoint>
    or: branch <name> <checkpoint>
@@ -53,7 +53,7 @@ trap 'rm -f "$tmp".*' 0
 # Who records messages: --from, $GIT_CS_FROM, cs.from, or the author name.
 from=${GIT_CS_FROM:-$(git config cs.from)}
 from=${from:-$(git var GIT_AUTHOR_IDENT | sed 's/ <.*//; s/[^A-Za-z0-9._-]/-/g')}
-code= retracts= supersedes=
+code= retracts= supersedes= paths=
 
 # A conditional update lost a race; callers may retry on this exit status.
 stale () {
@@ -97,7 +97,7 @@ new_id () {
 }
 
 # Write a typed message of kind $1 with body $2, a new id, and the fields set in
-# $from, $code, $retracts and $supersedes (message ids).
+# $from, $code, $retracts and $supersedes (message ids), and $paths (one per line).
 write_message () {
 	case "$1" in
 	""|*[!a-z0-9-]*) die "invalid kind: $1" ;;
@@ -114,6 +114,7 @@ write_message () {
 		test -z "$code" || echo "code: $code"
 		test -z "$retracts" || echo "retracts: $retracts"
 		test -z "$supersedes" || echo "supersedes: $supersedes"
+		printf '%s' "$paths" | sed 's/^/path: /'
 		echo
 		printf '%s\n' "$2"
 	} >"$tmp.msg"
@@ -134,14 +135,15 @@ checkpoint () {
 # Read the messages of the given revisions in one pass and print them per mode:
 # "context" prints visible messages oldest first, once per message id and without
 # retracted ones, keeping only the last $f_last of those matching the comma lists
-# $f_kind and $f_from; "codes" prints "<checkpoint> <code>".
+# $f_kind and $f_from and, unless they name no paths, concerning $f_path;
+# "codes" prints "<checkpoint> <code>".
 read_messages () {
 	mode=$1
 	shift
 	git rev-list --reverse --topo-order "$@" |
 	sed 's/.*/&:message &/' |
 	git cat-file --batch='%(objectsize) %(rest)' |
-	LC_ALL=C awk -v mode="$mode" -v kinds="$f_kind" -v froms="$f_from" -v last="$f_last" '
+	LC_ALL=C awk -v mode="$mode" -v kinds="$f_kind" -v froms="$f_from" -v last="$f_last" -v path="$f_path" '
 	function add(id, text,    n, line, i, h, key) {
 		n = split(text, line, "\n")
 		for (i = 1; i < n && line[i] != ""; i++) {
@@ -150,6 +152,8 @@ read_messages () {
 			val[id, key] = substr(line[i], h + 2)
 			if (key == "retracts" || key == "supersedes")
 				hidden[val[id, key]] = 1
+			if (key == "path")
+				about[id] = about[id] "\n" val[id, key]
 		}
 		body[id] = line[i + 1]
 		for (i += 2; i < n; i++)
@@ -175,6 +179,15 @@ read_messages () {
 	function wanted(list, item) {
 		return list == "" || index("," list ",", "," item ",")
 	}
+	function relevant(id,    n, p, i) {
+		if (path == "" || about[id] == "")
+			return 1
+		n = split(about[id], p, "\n")
+		for (i = 2; i <= n; i++)
+			if (p[i] == path || index(path, p[i] "/") == 1 || index(p[i], path "/") == 1)
+				return 1
+		return 0
+	}
 	END {
 		for (i = 0; i < count; i++) {
 			id = order[i]
@@ -185,7 +198,7 @@ read_messages () {
 			} else {
 				mid = val[id, "id"] != "" ? val[id, "id"] : id
 				if (kind != "merge" && kind != "retract" && !hidden[mid] && !shown[mid]++ &&
-				    wanted(kinds, kind) && wanted(froms, val[id, "from"]))
+				    wanted(kinds, kind) && wanted(froms, val[id, "from"]) && relevant(id))
 					out[nout++] = substr(id, 1, 10) " " val[id, "from"] " " kind ": " body[id]
 			}
 		}
@@ -229,6 +242,8 @@ cmd_commit () {
 			supersedes=$(field $supersedes id) || exit
 			test -n "$supersedes" || die "checkpoint has no id: $2"
 			shift ;;
+		--path) test -n "$2" || usage; paths="$paths$2
+"; shift ;;
 		--expect) expect=$2; shift ;;
 		*) usage ;;
 		esac
@@ -263,7 +278,7 @@ cmd_show () {
 cmd_context () {
 	c=$(rev "$1") || exit
 	shift
-	since= f_kind= f_from= f_last=
+	since= f_kind= f_from= f_last= f_path=
 	while test $# -gt 0
 	do
 		case "$1" in
@@ -271,6 +286,7 @@ cmd_context () {
 		--last) f_last=$2; shift ;;
 		--kind) f_kind=$2; shift ;;
 		--from) f_from=$2; shift ;;
+		--path) f_path=${2%/}; shift ;;
 		*) usage ;;
 		esac
 		shift

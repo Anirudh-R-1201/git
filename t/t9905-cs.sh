@@ -142,6 +142,22 @@ test_expect_success 'a superseding message replaces the old one in context' '
 	test_cmp expect actual
 '
 
+test_expect_success 'context --path keeps notes about that path and general notes' '
+	git cs branch scoped $base &&
+	git cs commit scoped -m "parser rule" --path src/parse.py --path src/lex.py &&
+	git cs commit scoped -m "docs style" --path docs &&
+	git cs show scoped~1 >msg &&
+	test_grep "^path: src/lex.py$" msg &&
+	git cs context scoped --path src/parse.py | cut -d " " -f 3- >actual &&
+	printf "message: Investigate SQLite\nmessage: parser rule\n" >expect &&
+	test_cmp expect actual &&
+	git cs context scoped --path src/ | cut -d " " -f 3- >actual &&
+	test_cmp expect actual &&
+	git cs context scoped --path docs/style.md | cut -d " " -f 3- >actual &&
+	printf "message: Investigate SQLite\nmessage: docs style\n" >expect &&
+	test_cmp expect actual
+'
+
 test_expect_success 'log shows one line per checkpoint' '
 	git cs log main >log &&
 	test_line_count = 3 log &&

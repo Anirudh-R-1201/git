@@ -431,6 +431,18 @@ test_expect_success 'push is atomic across code and context' '
 	test "$(git -C hub.git rev-parse refs/cs/heads/a)" = $before
 '
 
+test_expect_success 'push --context publishes only chosen branches and needed pins' '
+	git init --bare hub2.git &&
+	lonely=$(git cs commit lonely -m unrelated) &&
+	git push hub2.git $lonely:refs/cs/heads/b &&
+	test_must_fail git cs push hub2.git HEAD:refs/heads/master &&
+	git cs push hub2.git --context a HEAD:refs/heads/master &&
+	git -C hub2.git rev-parse refs/cs/heads/a &&
+	test_must_fail git -C hub2.git rev-parse -q --verify refs/cs/heads/main &&
+	test "$(git -C hub2.git rev-parse refs/cs/heads/b)" = $lonely &&
+	git -C hub2.git rev-parse refs/cs/pins/$(git cs links --code HEAD)
+'
+
 test_expect_success 'bundle carries context offline' '
 	git cs bundle cs.bundle HEAD &&
 	git init offline &&

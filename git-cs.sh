@@ -39,7 +39,7 @@ USAGE='init
    or: commit-code --context <checkpoint> -- <git-commit-options>
    or: fsck [<code-revs>...]
    or: links (--code <commit> | --context <checkpoint> [<code-refs>...])
-   or: push <remote> [<code-refspec>...]
+   or: push <remote> [--context <branch>]... [<code-refspec>...]
    or: fetch <remote>
    or: bundle <file> [<code-refs>...]'
 
@@ -475,9 +475,32 @@ cmd_links () {
 }
 
 cmd_push () {
-	remote=$1
+	remote=$1 heads= code= srcs=
 	shift
-	git push --atomic "$remote" "refs/cs/heads/*:refs/cs/heads/*" "refs/cs/pins/*:refs/cs/pins/*" "refs/cs/tags/*:refs/cs/tags/*" "refs/cs/labels/*:refs/cs/labels/*" "$@"
+	while test $# -gt 0
+	do
+		case "$1" in
+		--context)
+			git rev-parse -q --verify "$(ref "$2")" >/dev/null || die "no such branch: $2"
+			heads="$heads $(ref "$2"):$(ref "$2")"
+			shift ;;
+		*)
+			code="$code $1"
+			s=${1#+}
+			srcs="$srcs ${s%%:*}" ;;
+		esac
+		shift
+	done
+	test -n "$heads" ||
+	heads="refs/cs/heads/*:refs/cs/heads/* refs/cs/pins/*:refs/cs/pins/* refs/cs/tags/*:refs/cs/tags/* refs/cs/labels/*:refs/cs/labels/*"
+	# A scoped push still sends the pins that the pushed code links to.
+	pins=$(test -z "$srcs" || code_links $srcs --not --remotes="$remote" |
+		awk '$2 == 1 { print "refs/cs/pins/" $3 }' | sort -u |
+		while read -r p
+		do
+			git rev-parse -q --verify $p >/dev/null && echo "$p:$p"
+		done)
+	git push --atomic "$remote" $heads $pins $code
 }
 
 cmd_fetch () {

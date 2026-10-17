@@ -31,7 +31,7 @@ git cs unpin <checkpoint>...
 git cs commit-code --context <checkpoint> -- <git-commit-options>
 git cs fsck [<code-revs>...]
 git cs links (--code <commit> | --context <checkpoint> [<code-refs>...])
-git cs push <remote> [<code-refspec>...]
+git cs push <remote> [--context <branch>]... [<code-refspec>...]
 git cs fetch <remote>
 git cs bundle <file> [<code-refs>...]
 
@@ -196,10 +196,13 @@ COMMANDS
 	reachable from _<code-refs>_ (default: all branches) that name
 	_<checkpoint>_.
 
-`push <remote> [<code-refspec>...]`::
+`push <remote> [--context <branch>]... [<code-refspec>...]`::
 	Push context branches, pins, tags and labels, together with any
 	_<code-refspec>_, in one atomic push: either all refs update or
-	none do.
+	none do. With `--context`, push only the named context branches
+	and the pins of checkpoints that the pushed code links to, so an
+	unrelated stale branch cannot block the push. Code named in a
+	checkpoint's `code` field is not sent unless it is pushed too.
 
 `fetch <remote>`::
 	Fetch context branches into `refs/cs/remotes/<remote>/` and

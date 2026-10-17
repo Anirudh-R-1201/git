@@ -119,8 +119,60 @@ checkpoint () {
 	git commit-tree $tree $parents -m "$(sed -n '1s/^kind: //p' "$tmp.msg"): $subject"
 }
 
-body () {
-	git cat-file blob "$1:message" | sed '1,/^$/d'
+# Read the messages of the given revisions in one pass and print them per mode:
+# "context" prints visible messages oldest first, once per message id and without
+# retracted ones; "codes" prints "<checkpoint> <code>".
+read_messages () {
+	mode=$1
+	shift
+	git rev-list --reverse --topo-order "$@" |
+	sed 's/.*/&:message &/' |
+	git cat-file --batch='%(objectsize) %(rest)' |
+	LC_ALL=C awk -v mode="$mode" '
+	function add(id, text,    n, line, i, h, key) {
+		n = split(text, line, "\n")
+		for (i = 1; i < n && line[i] != ""; i++) {
+			h = index(line[i], ": ")
+			key = substr(line[i], 1, h - 1)
+			val[id, key] = substr(line[i], h + 2)
+			if (key == "retracts")
+				hidden[val[id, key]] = 1
+		}
+		body[id] = line[i + 1]
+		for (i += 2; i < n; i++)
+			body[id] = body[id] "\n" line[i]
+		order[count++] = id
+	}
+	skip { skip = 0; next }
+	!need {
+		if ($2 == "missing")
+			next
+		need = $1; id = $2; text = ""
+		next
+	}
+	{
+		text = text $0 "\n"
+		need -= length($0) + 1
+		if (need <= 0) {
+			add(id, text)
+			need = 0
+			skip = 1
+		}
+	}
+	END {
+		for (i = 0; i < count; i++) {
+			id = order[i]
+			kind = val[id, "kind"]
+			if (mode == "codes") {
+				if (val[id, "code"] != "")
+					print id, val[id, "code"]
+			} else {
+				mid = val[id, "id"] != "" ? val[id, "id"] : id
+				if (kind != "merge" && kind != "retract" && !hidden[mid] && !shown[mid]++)
+					print substr(id, 1, 10) " " kind ": " body[id]
+			}
+		}
+	}'
 }
 
 cmd_init () {
@@ -170,25 +222,7 @@ cmd_show () {
 # merges, retractions and the messages they retract.
 cmd_context () {
 	c=$(rev "$1") || exit
-	retracted=$(git rev-list $c | while read -r r
-		do
-			field $r retracts
-		done | tr '\n' ' ')
-	seen=
-	git rev-list --reverse --topo-order $c |
-	while read -r r
-	do
-		kind=$(field $r kind)
-		case "$kind" in
-		merge|retract) continue ;;
-		esac
-		id=$(field $r id)
-		case " $retracted $seen " in
-		*" ${id:-$r} "*) continue ;;
-		esac
-		seen="$seen ${id:-$r}"
-		printf '%s %s: %s\n' $(git rev-parse --short $r) "$kind" "$(body $r)"
-	done
+	read_messages context $c
 }
 
 cmd_log () {

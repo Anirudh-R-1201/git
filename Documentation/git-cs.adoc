@@ -174,7 +174,9 @@ COMMANDS
 
 `fsck [<code-revs>...]`::
 	Check that every ref under `refs/cs/` is a checkpoint with an
-	`id` whose `code` field, if any, names an existing commit, and that every code
+	`id`, that every checkpoint reachable from them whose `code` field
+	names a commit has that commit locally (a context-only transfer can
+	leave it out), and that every code
 	commit selected by _<code-revs>_ (default: all branches) names
 	exactly one pinned checkpoint, reporting a link to anything that
 	is not a checkpoint as such. Pass a range such as

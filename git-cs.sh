@@ -419,9 +419,12 @@ cmd_fsck () {
 			continue
 		fi
 		test -n "$(field $c id)" || echo "missing id: $name"
-		code=$(field $c code)
-		test -z "$code" || git cat-file -e "$code^{commit}" 2>/dev/null ||
-		echo "missing code commit: $name -> $code"
+	done
+	read_messages codes $(git for-each-ref --format='%(objectname)' refs/cs/) |
+	while read -r c code
+	do
+		git cat-file -e "$code^{commit}" 2>/dev/null ||
+		echo "missing code commit: $c -> $code"
 	done
 	code_links "${@:---branches}" |
 	while read -r code n ctx

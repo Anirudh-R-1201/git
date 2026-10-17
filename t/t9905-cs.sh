@@ -370,6 +370,22 @@ test_expect_success 'fsck reports checkpoints without an id' '
 	git update-ref -d refs/cs/heads/noid
 '
 
+test_expect_success 'fsck checks the code link of every reachable checkpoint' '
+	git cs branch deep main &&
+	git cs commit deep -m "points at code" --code HEAD &&
+	git cs commit deep -m "newer tip" &&
+	git cs fsck code..HEAD &&
+	git cat-file -p refs/cs/heads/deep~1:message |
+		sed "s/^code: .*/code: $(test_oid deadbeef)/" >msg &&
+	tree=$(printf "100644 blob %s\tmessage\n" $(git hash-object -w msg) | git mktree) &&
+	bad=$(git commit-tree $tree -p refs/cs/heads/deep~2 -m broken) &&
+	git cs branch broken $bad &&
+	git cs commit broken -m "tip is fine" &&
+	test_must_fail git cs fsck code..HEAD >out 2>&1 &&
+	test_grep "missing code commit: $bad" out &&
+	git update-ref -d refs/cs/heads/broken
+'
+
 test_expect_success 'linked context survives branch deletion and gc' '
 	ctx=$(git rev-parse refs/cs/heads/main) &&
 	git update-ref -d refs/cs/heads/main &&

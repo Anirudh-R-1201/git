@@ -60,3 +60,25 @@ check.
 Retention is unchanged: linked checkpoints are kept by pins under
 `refs/cs/pins/`, so pushing code never ships context unless `git cs push` is
 used.
+
+## Changes from the parallel-agent benchmark report
+
+A benchmark across four real coding tasks (CS versus plain-text notes versus
+no sharing) found that the transport worked but cost more agent time and
+tokens, and listed concrete defects. Each change below is one commit.
+
+| Report finding | Change |
+|---|---|
+| `commit --expect <branch>` returned `STALE_TIP` for an unmoved tip | `--expect` resolves context branch names |
+| Rebasing onto an already included peer rewrote the tip | `rebase` reports `Already up to date` or fast-forwards |
+| 101 notes took about 5 s to read | `context` reads all messages in one `cat-file --batch` pass (100 notes: 3 s to under 0.1 s) |
+| `fsck` checked only branch tips' code links | `fsck` checks every reachable checkpoint and reports code commits missing locally |
+| A plain `git pull` brought links but no context | `git cs remote <name>` (also run by `init`) adds the fetch refspecs |
+| `cs push` published every head; a stale unrelated head blocked a valid push | `push --context <branch>` sends only chosen branches plus the pins the pushed code needs |
+| Full-history reads wasted time and prompt space | `context --since/--last/--kind/--from/--path` |
+| Catching up took fetch, rebase, diff and show | `sync` merges the team context and prints only unseen messages from others, keeping a read cursor in `refs/cs/seen/` |
+| Agents polled with a helper loop | `wait` blocks until named senders have published |
+| The coordinator picked relevant notes by hand | `path` fields and `context --path` |
+| Contradicting notes stayed visible until a manual revert | `supersedes` field: a correction replaces what it corrects |
+| Agents typed their name into every message | `from` field (`--from`, `GIT_CS_FROM`, `cs.from`, author name) |
+| Publication-to-read delay was not measured | The `refs/cs/seen/` reflog records when each message was read |

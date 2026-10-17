@@ -21,6 +21,7 @@ USAGE='init
    or: commit <branch> (-m <message> | -F <file>) [--kind <kind>] [--code <commit>] [--from <name>] [--supersedes <checkpoint>] [--path <path>]... [--expect <checkpoint>]
    or: show <checkpoint>
    or: context <checkpoint> [--since <checkpoint>] [--last <n>] [--kind <kinds>] [--from <names>] [--path <path>]
+   or: sync <branch> <team> [<context-options>]
    or: log <checkpoint>
    or: diff <checkpoint> <checkpoint>
    or: branch <name> <checkpoint>
@@ -143,7 +144,7 @@ read_messages () {
 	git rev-list --reverse --topo-order "$@" |
 	sed 's/.*/&:message &/' |
 	git cat-file --batch='%(objectsize) %(rest)' |
-	LC_ALL=C awk -v mode="$mode" -v kinds="$f_kind" -v froms="$f_from" -v last="$f_last" -v path="$f_path" '
+	LC_ALL=C awk -v mode="$mode" -v kinds="$f_kind" -v froms="$f_from" -v last="$f_last" -v path="$f_path" -v self="$f_self" '
 	function add(id, text,    n, line, i, h, key) {
 		n = split(text, line, "\n")
 		for (i = 1; i < n && line[i] != ""; i++) {
@@ -198,7 +199,8 @@ read_messages () {
 			} else {
 				mid = val[id, "id"] != "" ? val[id, "id"] : id
 				if (kind != "merge" && kind != "retract" && !hidden[mid] && !shown[mid]++ &&
-				    wanted(kinds, kind) && wanted(froms, val[id, "from"]) && relevant(id))
+				    wanted(kinds, kind) && wanted(froms, val[id, "from"]) && relevant(id) &&
+				    val[id, "from"] != self)
 					out[nout++] = substr(id, 1, 10) " " val[id, "from"] " " kind ": " body[id]
 			}
 		}
@@ -278,7 +280,12 @@ cmd_show () {
 cmd_context () {
 	c=$(rev "$1") || exit
 	shift
-	since= f_kind= f_from= f_last= f_path=
+	context_options "$@" &&
+	read_messages context $c ${since:+^$since}
+}
+
+context_options () {
+	since= f_kind= f_from= f_last= f_path= f_self=
 	while test $# -gt 0
 	do
 		case "$1" in
@@ -291,7 +298,18 @@ cmd_context () {
 		esac
 		shift
 	done
-	read_messages context $c ${since:+^$since}
+}
+
+# Bring <team> into <me> and print the messages from others not seen since the last sync.
+cmd_sync () {
+	me=$1 team=$2
+	shift 2
+	context_options "$@" &&
+	tip=$( (branch=$me name=$team noff= message=; merge_once) 2>/dev/null) || die "cannot sync $me with $team"
+	seen=$(git rev-parse -q --verify refs/cs/seen/"$me")
+	f_self=$from
+	read_messages context $tip ${seen:+^$seen} &&
+	git update-ref --create-reflog -m "cs sync" refs/cs/seen/"$me" $tip
 }
 
 cmd_log () {
@@ -572,7 +590,7 @@ cmd_bundle () {
 cmd=$1
 shift
 case "$cmd" in
-init|remote|commit|show|context|log|diff|branch|switch|reset|reflog|tag|label|merge|rebase|\
+init|remote|commit|show|context|sync|log|diff|branch|switch|reset|reflog|tag|label|merge|rebase|\
 cherry-pick|revert|pin|unpin|commit-code|fsck|links|push|fetch|bundle)
 	cmd_$(echo "$cmd" | tr - _) "$@" ;;
 *)

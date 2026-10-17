@@ -13,6 +13,7 @@ git cs remote <name>
 git cs commit <branch> (-m <message> | -F <file>) [--kind <kind>] [--code <commit>] [--from <name>] [--supersedes <checkpoint>] [--path <path>]... [--expect <checkpoint>]
 git cs show <checkpoint>
 git cs context <checkpoint> [--since <checkpoint>] [--last <n>] [--kind <kinds>] [--from <names>] [--path <path>]
+git cs sync <branch> <team> [<context-options>]
 git cs log <checkpoint>
 git cs diff <checkpoint> <checkpoint>
 git cs branch <name> <checkpoint>
@@ -122,6 +123,14 @@ COMMANDS
 	senders, `--path` keeps messages about _<path>_, a directory
 	containing it, or a file inside it, along with messages that name
 	no path, and `--last` keeps the last _<n>_ of what remains.
+
+`sync <branch> <team> [<context-options>]`::
+	Merge _<team>_ into _<branch>_, then print the messages that
+	_<branch>_ gained since its previous sync, leaving out the
+	caller's own (see `--from` under `commit`). The context options
+	narrow them as for `context`. The position is kept in
+	`refs/cs/seen/<branch>`, whose reflog records when new messages
+	were read.
 
 `log <checkpoint>`::
 	List the checkpoints leading to _<checkpoint>_, newest first, with

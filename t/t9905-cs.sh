@@ -158,6 +158,24 @@ test_expect_success 'context --path keeps notes about that path and general note
 	test_cmp expect actual
 '
 
+test_expect_success 'sync shows only new messages from others and remembers them' '
+	git cs branch team $base &&
+	git cs branch mine $base &&
+	git cs commit team -m "from x" --from x &&
+	git cs commit mine -m "my own" &&
+	git cs sync mine team | cut -d " " -f 2- >actual &&
+	echo "x message: from x" >expect &&
+	test_cmp expect actual &&
+	git cs sync mine team >actual &&
+	test_must_be_empty actual &&
+	git cs commit team -m "later from y" --from y &&
+	git cs sync mine team | cut -d " " -f 2- >actual &&
+	echo "y message: later from y" >expect &&
+	test_cmp expect actual &&
+	git reflog show refs/cs/seen/mine >log &&
+	test_line_count = 2 log
+'
+
 test_expect_success 'log shows one line per checkpoint' '
 	git cs log main >log &&
 	test_line_count = 3 log &&

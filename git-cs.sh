@@ -22,6 +22,7 @@ USAGE='init
    or: show <checkpoint>
    or: context <checkpoint> [--since <checkpoint>] [--last <n>] [--kind <kinds>] [--from <names>] [--path <path>]
    or: sync <branch> <team> [<context-options>]
+   or: wait <branch> <team> --from <names> [--kind <kinds>] [--timeout <seconds>]
    or: log <checkpoint>
    or: diff <checkpoint> <checkpoint>
    or: branch <name> <checkpoint>
@@ -312,6 +313,38 @@ cmd_sync () {
 	git update-ref --create-reflog -m "cs sync" refs/cs/seen/"$me" $tip
 }
 
+# Sync <me> with <team> until every sender in --from has a message there, then show what is new.
+cmd_wait () {
+	me=$1 team=$2 waitfor= kinds= timeout=180 start=$(date +%s)
+	shift 2
+	while test $# -gt 0
+	do
+		case "$1" in
+		--from) waitfor=$2; shift ;;
+		--kind) kinds=$2; shift ;;
+		--timeout) timeout=$2; shift ;;
+		*) usage ;;
+		esac
+		shift
+	done
+	test -n "$waitfor" || usage
+	while :
+	do
+		tip=$( (branch=$me name=$team noff= message=; merge_once) 2>/dev/null) || die "cannot sync $me with $team"
+		missing=
+		for who in $(echo "$waitfor" | tr , ' ')
+		do
+			f_from=$who f_kind=$kinds f_last= f_path= f_self=
+			test -n "$(read_messages context $tip)" || missing="$missing $who"
+		done
+		test -n "$missing" || break
+		test $(($(date +%s) - start)) -lt $timeout || die "timed out waiting for:$missing"
+		echo >&2 "waiting for:$missing"
+		sleep 2
+	done
+	cmd_sync "$me" "$team"
+}
+
 cmd_log () {
 	c=$(rev "$1") || exit
 	git log --date=short --format='%h %ad %an %s' $c
@@ -590,7 +623,7 @@ cmd_bundle () {
 cmd=$1
 shift
 case "$cmd" in
-init|remote|commit|show|context|sync|log|diff|branch|switch|reset|reflog|tag|label|merge|rebase|\
+init|remote|commit|show|context|sync|wait|log|diff|branch|switch|reset|reflog|tag|label|merge|rebase|\
 cherry-pick|revert|pin|unpin|commit-code|fsck|links|push|fetch|bundle)
 	cmd_$(echo "$cmd" | tr - _) "$@" ;;
 *)

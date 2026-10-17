@@ -176,6 +176,23 @@ test_expect_success 'sync shows only new messages from others and remembers them
 	test_line_count = 2 log
 '
 
+# Publish a learning from z a few seconds from now.
+deliver_late () {
+	(sleep 3 && git cs commit lateteam -m arrived --from z --kind learning >/dev/null) &
+}
+
+test_expect_success 'wait returns once the awaited senders have published' '
+	git cs branch lateteam $base &&
+	git cs branch waiter $base &&
+	deliver_late &&
+	git cs wait waiter lateteam --from z --kind learning --timeout 60 >out 2>err &&
+	wait &&
+	test_grep "z learning: arrived" out &&
+	test_grep "waiting for: z" err &&
+	test_must_fail git cs wait waiter lateteam --from nobody --timeout 1 2>err &&
+	test_grep "timed out waiting for: nobody" err
+'
+
 test_expect_success 'log shows one line per checkpoint' '
 	git cs log main >log &&
 	test_line_count = 3 log &&

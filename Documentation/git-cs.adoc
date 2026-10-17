@@ -14,6 +14,7 @@ git cs commit <branch> (-m <message> | -F <file>) [--kind <kind>] [--code <commi
 git cs show <checkpoint>
 git cs context <checkpoint> [--since <checkpoint>] [--last <n>] [--kind <kinds>] [--from <names>] [--path <path>]
 git cs sync <branch> <team> [<context-options>]
+git cs wait <branch> <team> --from <names> [--kind <kinds>] [--timeout <seconds>]
 git cs log <checkpoint>
 git cs diff <checkpoint> <checkpoint>
 git cs branch <name> <checkpoint>
@@ -131,6 +132,12 @@ COMMANDS
 	narrow them as for `context`. The position is kept in
 	`refs/cs/seen/<branch>`, whose reflog records when new messages
 	were read.
+
+`wait <branch> <team> --from <names> [--kind <kinds>] [--timeout <seconds>]`::
+	Merge _<team>_ into _<branch>_ every two seconds until each of the
+	comma-separated senders has a message there, of one of _<kinds>_
+	if given, then print what is new as `sync` does. Fails after
+	_<seconds>_ (default 180), naming the senders still missing.
 
 `log <checkpoint>`::
 	List the checkpoints leading to _<checkpoint>_, newest first, with

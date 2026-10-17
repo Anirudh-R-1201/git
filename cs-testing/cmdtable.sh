@@ -6,7 +6,7 @@
 # and works in a throwaway directory unless CS_SANDBOX is set.
 # Writes <sandbox>/cmdtable.tsv and <sandbox>/cmdtable.md and exits non-zero on any FAIL.
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-export PATH="${CS_GIT_BIN:-$ROOT/bin-wrappers}:$PATH"
+export PATH="${CS_GIT_BIN:-$ROOT/bin-wrappers}:$PATH" GIT_CS_FROM=tester
 SB=${CS_SANDBOX:-$(mktemp -d "${TMPDIR:-/tmp}/cs-testing.XXXXXX")}
 W=$SB/cmdtable P=$SB/cmdtable/p OUT=$SB/cmdtable.tsv E=$SB/cmdtable/p/err
 rm -rf $W $OUT && mkdir -p $P && cd $W
@@ -24,14 +24,14 @@ row () {
 }
 yn () { "$@" >/dev/null 2>&1 && echo yes || echo no; }
 tip () { git rev-parse refs/cs/heads/$1; }
-ctx () { git cs context "$1" | sed -E 's/^[0-9a-f]+ //' | paste -sd'|' -; }
+ctx () { git cs context "$@" | sed -E 's/^[0-9a-f]+ [^ ]+ //' | paste -sd'|' -; }
 kind () { git cs show "$1" | sed -n '1s/^kind: //p'; }
 parents () { git rev-list --parents -1 "$1" | awk '{ print NF - 1 }'; }
 link () { git cat-file commit "$1" | sed -n '/^$/q; s/^context //p'; }
 
 row "commit -m" "git cs commit main -m 'Investigate SQLite'" "tree=message code_head_moved=no worktree_clean=yes" \
 	'BASE=$(git cs commit main -m "Investigate SQLite"); echo "tree=$(git ls-tree --name-only $BASE) code_head_moved=$([ $(git rev-parse HEAD) = $H ] && echo no || echo yes) worktree_clean=$([ -z "$(git status --porcelain)" ] && echo yes || echo no)"'
-row "show" "git cs show main" "kind: message  Investigate SQLite" \
+row "show" "git cs show main  (id line dropped)" "kind: message from: tester  Investigate SQLite" \
 	'git cs show main | sed "/^id: /d"'
 row "commit --kind --code" "git cs commit main -m 'Use WAL mode' --kind learning --code HEAD" "kind=learning code=HEAD subject=learning: Use WAL mode" \
 	'c=$(git cs commit main -m "Use WAL mode" --kind learning --code HEAD); echo "kind=$(kind $c) code=$([ "$(git cs show $c | sed -n "s/^code: //p")" = $H ] && echo HEAD) subject=$(git log -1 --format=%s $c)"'
@@ -44,7 +44,7 @@ row "commit (invalid input)" "bad kind / --code nope / empty message" "bad_kind=
 	'echo "bad_kind=$(git cs commit main -m x --kind "Bad Kind" >/dev/null 2>&1 && echo accepted || echo refused) bad_code=$(git cs commit main -m x --code nope >/dev/null 2>&1 && echo accepted || echo refused) empty=$(git cs commit main -m "" >/dev/null 2>&1 && echo accepted || echo refused)"'
 row "context" "git cs context main" "message: Investigate SQLite|learning: Use WAL mode|message: newer" \
 	'ctx main'
-row "log" "git cs log main" "3 lines, newest=message: newer" \
+row "log" "git cs log main" "3 lines, newest=tester message: newer" \
 	'echo "$(git cs log main | wc -l | tr -d " ") lines, newest=$(git cs log main | head -1 | cut -d" " -f3-)"'
 row "show (bare name)" "git cs show main  (code branch main also exists)" "resolves_to=context" \
 	'echo "resolves_to=$([ "$(git cs show main)" = "$(git cs show refs/cs/heads/main)" ] && echo context || echo code)"'
@@ -71,7 +71,7 @@ row "merge (fast-forward)" "git cs merge ff agent-a" "stderr=Fast-forward tip=ag
 row "merge (up to date)" "git cs merge ff <base>" "stderr=Already up to date printed=current_tip" \
 	'o=$(git cs merge ff $BASE 2>$E); echo "stderr=$(cat $E) printed=$([ $o = $A ] && echo current_tip)"'
 row "merge (checkpoint)" "git cs merge agent-a agent-b" "stderr=Merge checkpoint kind=merge parents=2 context=message: Investigate SQLite|message: from a|message: from b" \
-	'm=$(git cs merge agent-a agent-b 2>$E); echo "stderr=$(cat $E) kind=$(kind $m) parents=$(parents $m) context=$(git cs context agent-a | sed -E "s/^[0-9a-f]+ //" | sort | paste -sd"|" -)"'
+	'm=$(git cs merge agent-a agent-b 2>$E); echo "stderr=$(cat $E) kind=$(kind $m) parents=$(parents $m) context=$(git cs context agent-a | sed -E "s/^[0-9a-f]+ [^ ]+ //" | sort | paste -sd"|" -)"'
 git cs branch noff $BASE
 row "merge --no-ff -m" "git cs merge noff agent-b --no-ff -m 'take b'" "parents=2 body=take b" \
 	'm=$(git cs merge noff agent-b --no-ff -m "take b" 2>/dev/null); echo "parents=$(parents $m) body=$(git cs show $m | sed "1,/^\$/d")"'
@@ -89,8 +89,8 @@ row "commit (8 parallel, same tip)" "8x: git cs commit race -m rN --expect <tip>
 git cs branch topic $BASE; git cs commit topic -m t1 >/dev/null; git cs commit topic -m t2 >/dev/null; TOPIC=$(tip topic)
 row "rebase" "git cs rebase topic agent-b" "context=message: Investigate SQLite|message: from b|message: t1|message: t2 recovery=old_tip" \
 	'git cs rebase topic agent-b >/dev/null; echo "context=$(ctx topic) recovery=$([ $(git rev-parse refs/cs/recovery/topic) = $TOPIC ] && echo old_tip)"'
-row "rebase (merge checkpoints)" "git cs rebase agent-a <base>" "refused=yes stderr=cannot replay merge checkpoints" \
-	'git cs rebase agent-a $BASE >/dev/null 2>$E; echo "refused=$([ $? -ne 0 ] && echo yes) stderr=$(cat $E)"'
+row "rebase (merge checkpoints)" "git cs rebase agent-a topic" "refused=yes stderr=cannot replay merge checkpoints" \
+	'git cs rebase agent-a topic >/dev/null 2>$E; echo "refused=$([ $? -ne 0 ] && echo yes) stderr=$(cat $E)"'
 git cs branch pick $BASE
 row "cherry-pick" "git cs cherry-pick pick topic" "context=message: Investigate SQLite|message: t2" \
 	'git cs cherry-pick pick topic >/dev/null; echo "context=$(ctx pick)"'
@@ -128,6 +128,32 @@ row "fetch" "git clone hub rx; git cs fetch origin" "links_resolve=yes fsck=clea
 	'git cs push origin main >/dev/null 2>&1; git clone -q ../hub.git ../rx; (cd ../rx && git cs fetch origin >/dev/null 2>&1 && echo "links_resolve=$(yn git cs show $(git cs links --code HEAD)) fsck=$(git cs fsck HEAD~1..HEAD >/dev/null 2>&1 && echo clean)")'
 row "bundle" "git cs bundle ctx.bundle main; fetch into empty repo" "links_resolve=yes" \
 	'git cs bundle $P/ctx.bundle main >/dev/null 2>&1; git init -q ../offline; git -C ../offline fetch -q $P/ctx.bundle "refs/cs/*:refs/cs/*" main:in; echo "links_resolve=$(yn git -C ../offline cs show $(git -C ../offline cs links --code in))"'
+row "commit --expect <branch name>" "git cs commit main -m named --expect main" "accepted=yes" \
+	'echo "accepted=$(yn git cs commit main -m named --expect main)"'
+row "rebase (already up to date)" "git cs rebase topic <base>  (topic already contains it)" "stderr=Already up to date tip_unchanged=yes" \
+	'T=$(tip topic); git cs rebase topic $BASE >/dev/null 2>$E; echo "stderr=$(cat $E) tip_unchanged=$([ $(tip topic) = $T ] && echo yes)"'
+row "rebase (fast-forward)" "git cs rebase behind agent-b  (behind is an ancestor)" "stderr=Fast-forward tip=agent-b" \
+	'git cs branch behind $BASE; git cs rebase behind agent-b >/dev/null 2>$E; echo "stderr=$(cat $E) tip=$([ $(tip behind) = $(tip agent-b) ] && echo agent-b)"'
+row "fsck (older checkpoint, missing code)" "checkpoint under the tip names an absent code commit" "flags=missing code commit" \
+	'B=$(git cs commit broken -m tip0); printf "kind: message\nfrom: tester\ncode: %s\n\nold\n" $(printf "%040d" 0 | tr 0 d) >$P/bad; X=$(printf "100644 blob %s\tmessage\n" $(git hash-object -w $P/bad) | git mktree); Y=$(git commit-tree $X -p $B -m old); git update-ref refs/cs/heads/broken $Y; git cs commit broken -m newtip >/dev/null; echo "flags=$(git cs fsck $H..main 2>&1 | grep -o "missing code commit" | head -1)"; git update-ref -d refs/cs/heads/broken'
+row "from" "git cs commit who -m one --from alpha; GIT_CS_FROM=beta ..." "senders=alpha,beta" \
+	'git cs branch who $BASE; git cs commit who -m one --from alpha >/dev/null; GIT_CS_FROM=beta git cs commit who -m two >/dev/null; echo "senders=$(git cs context who --last 2 | cut -d" " -f2 | paste -sd, -)"'
+row "context --since/--last/--kind/--from" "git cs context who --since <base>; --last 1; --from alpha; --kind learning" "since=2 last=two from=one kind=0" \
+	'echo "since=$(git cs context who --since $BASE | wc -l | tr -d " ") last=$(git cs context who --last 1 | cut -d" " -f4) from=$(git cs context who --from alpha | cut -d" " -f4) kind=$(git cs context who --kind learning | wc -l | tr -d " ")"'
+row "commit --supersedes" "two contradicting notes merged; a decision supersedes one" "context=message: Investigate SQLite|message: use uri|decision: use uri, not path" \
+	'git cs branch c1 $BASE; git cs branch c2 $BASE; p=$(git cs commit c1 -m "use path"); git cs commit c2 -m "use uri" >/dev/null; git cs merge c1 c2 >/dev/null 2>&1; git cs commit c1 -m "use uri, not path" --kind decision --supersedes $p >/dev/null; echo "context=$(ctx c1)"'
+row "commit --path / context --path" "notes about src/a.py and docs; context --path src" "context=message: Investigate SQLite|message: about a" \
+	'git cs branch scoped $BASE; git cs commit scoped -m "about a" --path src/a.py >/dev/null; git cs commit scoped -m "about docs" --path docs >/dev/null; echo "context=$(ctx scoped --path src)"'
+row "sync" "teammate x publishes to team; git cs sync me team twice" "first=x message: from x second=empty" \
+	'git cs branch team $BASE; git cs branch me $BASE; git cs commit team -m "from x" --from x >/dev/null; f=$(git cs sync me team | cut -d" " -f2-); s=$(git cs sync me team); echo "first=$f second=${s:-empty}"'
+row "wait" "y publishes after 2 s; git cs wait me team --from y --kind learning" "got=y learning: late timeout_exit=1" \
+	'(sleep 2; git cs commit team -m late --from y --kind learning >/dev/null) & g=$(git cs wait me team --from y --kind learning --timeout 30 2>/dev/null | cut -d" " -f2-); wait; git cs wait me team --from nobody --timeout 1 >/dev/null 2>&1; echo "got=$g timeout_exit=$?"'
+row "context speed" "git cs context on 100 notes" "under_1s=yes" \
+	'for i in $(seq 1 100); do git cs commit hundred -m "note $i" >/dev/null; done; s=$(perl -MTime::HiRes=time -e "print time"); git cs context hundred >/dev/null; e=$(perl -MTime::HiRes=time -e "print time"); echo "under_1s=$(perl -e "print $e - $s < 1 ? q(yes) : q(no)")"'
+row "remote + plain pull" "git clone hub rx2; git cs remote origin; git pull" "context_fetched=yes link_resolves=yes" \
+	'git cs push origin main >/dev/null 2>&1; git clone -q ../hub.git ../rx2; (cd ../rx2 && git cs remote origin && git pull -q >/dev/null 2>&1 && echo "context_fetched=$(yn git rev-parse refs/cs/remotes/origin/main) link_resolves=$(yn git cs show $(git cs links --code HEAD))")'
+row "push --context (scoped)" "remote has a diverged agent-b; git cs push hub2 --context main main" "plain_push=refused scoped=pushed agent-b_untouched=yes pin_sent=yes" \
+	'git init -q --bare ../hub2.git; L=$(git cs commit lone -m lone); git push -q ../hub2.git $L:refs/cs/heads/agent-b; p=$(git cs push ../hub2.git main >/dev/null 2>&1 && echo pushed || echo refused); s=$(git cs push ../hub2.git --context main main >/dev/null 2>&1 && echo pushed || echo refused); echo "plain_push=$p scoped=$s agent-b_untouched=$([ $(git -C ../hub2.git rev-parse refs/cs/heads/agent-b) = $L ] && echo yes) pin_sent=$(yn git -C ../hub2.git rev-parse refs/cs/pins/$(git cs links --code main))"'
 row "no JSON" "grep jq in the installed git-cs" "jq_calls=0" \
 	'echo "jq_calls=$(grep -c "jq " "$(git --exec-path)/git-cs")"'
 row "temp files" "ls .git after all runs" "left=0" \

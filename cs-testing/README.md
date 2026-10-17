@@ -89,8 +89,7 @@ cs-testing/agents/verify-team.sh /tmp/cs-team
 |---|---|
 | [agents/setup-team.sh](agents/setup-team.sh) | Creates the `textstats` project, seeds the team context `main` with two `-m` messages, and adds a worktree per agent |
 | [agents/PROMPT.md](agents/PROMPT.md) | The prompt for each agent: the `git cs` commands to use and each agent's task |
-| [agents/cs-wait](agents/cs-wait) | Helper the agents call to rebase onto the team context until teammates' learnings arrive |
-| [agents/verify-team.sh](agents/verify-team.sh) | Checks the shared context, merges the code with linked merge commits, runs the tests, and checks that a fresh clone resolves every link |
+| [agents/verify-team.sh](agents/verify-team.sh) | Counts each agent's messages and learnings, reports how long after recording each learning was read (from the `refs/cs/seen/` cursors left by `sync` and `wait`), merges the code with linked merge commits, runs the tests, and checks that a fresh clone resolves every link |
 
 The tasks depend on each other on purpose: beta must reuse alpha's tokenizer
 without seeing alpha's code, and gamma must write tests only from alpha's and

@@ -11,10 +11,31 @@ echo "team context: $(git cs log main | grep -vc ' merge: ') messages," \
 	"$(git rev-list --merges refs/cs/heads/main | wc -l | tr -d ' ') merges"
 for a in alpha beta gamma
 do
-	echo "$a: $(git cs log main | grep -c " [a-z-]*: $a:") messages on main," \
+	echo "$a: $(git log --no-merges --format=%an refs/cs/heads/main | grep -cx $a) messages on main," \
+		"$(git log --no-merges --format=%s --author="^$a" refs/cs/heads/main | grep -c '^learning: ') learnings," \
 		"$(git rev-list --count main..agent-$a) code commits," \
 		"fsck $(git cs fsck main..agent-$a >/dev/null 2>&1 && echo clean || echo FAILED)"
 done
+# Publication-to-read delay: when each agent's read cursor first covered a teammate's learning.
+for reader in alpha beta gamma
+do
+	git log -g --format='%H %gd' --date=unix refs/cs/seen/$reader 2>/dev/null |
+	sed 's/ .*@{\(.*\)}$/ \1/' | sort -k2n >reads
+	git log --format='%H %ct %an %s' refs/cs/heads/main | grep ' learning: ' |
+	while read -r note made author rest
+	do
+		test $author != $reader || continue
+		while read -r seen at
+		do
+			if git merge-base --is-ancestor $note $seen
+			then
+				echo "$reader read $author's learning $((at - made))s after it was recorded"
+				break
+			fi
+		done <reads
+	done
+done
+rm -f reads
 for a in alpha beta gamma
 do
 	git merge -q --no-commit --no-ff agent-$a || exit 1

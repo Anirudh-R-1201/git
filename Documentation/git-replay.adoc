@@ -22,6 +22,12 @@ none). Use `--ref-action=print` to avoid automatic ref updates and
 instead get update commands that can be piped to `git update-ref --stdin`
 (see the <<OUTPUT,OUTPUT>> section below).
 
+A replayed commit keeps the `context` header of the commit it was made
+from (see `--context` in linkgit:git-commit[1]), checked and, with
+`commit.requireContext` set, pinned; a revert does not. With
+`commit.requireContext` set, replaying a commit that would have no
+`context` header fails without updating any reference.
+
 THIS COMMAND IS EXPERIMENTAL. THE BEHAVIOR MAY CHANGE.
 
 OPTIONS

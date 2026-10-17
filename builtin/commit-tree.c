@@ -18,7 +18,7 @@
 static const char * const commit_tree_usage[] = {
 	N_("git commit-tree <tree> [(-p <parent>)...]"),
 	N_("git commit-tree [(-p <parent>)...] [-S[<keyid>]] [(-m <message>)...]\n"
-	   "                [(-F <file>)...] <tree>"),
+	   "                [(-F <file>)...] [--context <commit>] <tree>"),
 	NULL
 };
 
@@ -101,6 +101,10 @@ int cmd_commit_tree(int argc,
 	struct commit_list *parents = NULL;
 	struct object_id tree_oid;
 	struct object_id commit_oid;
+	struct object_id context_oid;
+	const char *context = NULL;
+	struct commit_extra_header *extra = NULL, **tail = &extra;
+	struct strbuf err = STRBUF_INIT;
 
 	struct option options[] = {
 		OPT_CALLBACK_F('p', NULL, &parents, N_("parent"),
@@ -122,6 +126,8 @@ int cmd_commit_tree(int argc,
 			.flags = PARSE_OPT_OPTARG,
 			.defval = (intptr_t) "",
 		},
+		OPT_STRING(0, "context", &context, N_("commit"),
+			   N_("context checkpoint the commit was made from")),
 		OPT_END()
 	};
 	int ret;
@@ -144,8 +150,25 @@ int cmd_commit_tree(int argc,
 			die_errno(_("git commit-tree: failed to read"));
 	}
 
-	if (commit_tree(buffer.buf, buffer.len, &tree_oid, parents, &commit_oid,
-			NULL, sign_commit)) {
+	if (context) {
+		int err = repo_get_context_oid(the_repository, context, &context_oid);
+
+		if (err == -1)
+			die(_("not a valid commit name %s"), context);
+		if (err)
+			die(_("not a context checkpoint: %s"), context);
+	}
+
+	append_merge_tag_headers(parents, &tail);
+	if (context)
+		append_context_header(&context_oid, &tail);
+	if (repo_keep_context(the_repository, extra, 0, &err)) {
+		error("%s", err.buf);
+		ret = 1;
+		goto out;
+	}
+	if (commit_tree_extended(buffer.buf, buffer.len, &tree_oid, parents,
+				 &commit_oid, NULL, NULL, sign_commit, extra)) {
 		ret = 1;
 		goto out;
 	}
@@ -154,6 +177,8 @@ int cmd_commit_tree(int argc,
 	ret = 0;
 
 out:
+	strbuf_release(&err);
+	free_commit_extra_headers(extra);
 	commit_list_free(parents);
 	strbuf_release(&buffer);
 	return ret;

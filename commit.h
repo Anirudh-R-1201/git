@@ -278,6 +278,48 @@ struct commit_extra_header {
 void append_merge_tag_headers(const struct commit_list *parents,
 			      struct commit_extra_header ***tail);
 
+/*
+ * Append a "context" header naming the context checkpoint this commit was
+ * made from.
+ */
+void append_context_header(const struct object_id *context,
+			   struct commit_extra_header ***tail);
+
+/*
+ * A context checkpoint is a commit whose tree holds exactly one regular
+ * file, "message" (see git-cs(1)); return 1 if "oid" names one.
+ */
+int repo_is_context_checkpoint(struct repository *r,
+			       const struct object_id *oid);
+
+/*
+ * Read the "context" header of "commit" into "oid". Return 0 if it names a
+ * context checkpoint, -2 if it names anything else, -1 if there is none.
+ */
+int repo_commit_context(struct repository *r, struct commit *commit,
+			struct object_id *oid);
+
+/*
+ * Resolve "name" to the context checkpoint a "context" header may name.
+ * Return 0 on success, -1 if it is not a commit, -2 if it is a commit that
+ * is not a context checkpoint.
+ */
+int repo_get_context_oid(struct repository *r, const char *name,
+			 struct object_id *oid);
+
+/*
+ * Check that the "context" header among "extra", if any, names a context
+ * checkpoint and, with commit.requireContext set, pin that checkpoint in
+ * refs/cs/pins/ so it outlives the context branches. With
+ * KEEP_CONTEXT_REQUIRED, also refuse a missing header when
+ * commit.requireContext is set. Return 0 on success, or -1 with a message
+ * in "err".
+ */
+#define KEEP_CONTEXT_REQUIRED (1 << 0)
+int repo_keep_context(struct repository *r,
+		      const struct commit_extra_header *extra,
+		      unsigned flags, struct strbuf *err);
+
 int commit_tree(const char *msg, size_t msg_len,
 		const struct object_id *tree,
 		const struct commit_list *parents, struct object_id *ret,

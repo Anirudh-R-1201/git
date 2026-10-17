@@ -1,8 +1,9 @@
-# ContextShadow primitives at `kaizen` 8d632c30b5
+# ContextShadow primitives on `kaizen`
 
-This describes the implementation at commit
-`8d632c30b5454c1a6d56d14f8347d9b6bc5bf3af`, whose `kaizen` tip was
-checked against `origin` on 2026-10-16. The command reference is
+This describes the implementation on the `kaizen` branch as of 2026-10-17:
+the 2026-10-16 work (stable message IDs, native links on every commit path)
+combined with the changes made after the parallel-agent benchmark report
+(see [DESIGN-NOTES.md](DESIGN-NOTES.md)). The command reference is
 [git-cs(1)](../Documentation/git-cs.adoc); the implementation is
 [`git-cs.sh`](../git-cs.sh) plus the native Git changes cited below.
 
@@ -31,8 +32,9 @@ The separate histories serve different questions:
 A checkpoint is a Git commit with a tree containing exactly one regular file,
 `message`. A normal checkpoint has one parent (or none for a new context
 branch); a context merge checkpoint has two. The file contains `kind:`, a
-random 128-bit `id:`, an optional `code:`, a blank line and the message body.
-A retraction also has `retracts: <message-id>`. The message ID survives context
+random 128-bit `id:`, the sender in `from:`, an optional `code:`, any number
+of `path:` lines, a blank line and the message body. A retraction also has
+`retracts: <message-id>`, and a correction `supersedes: <message-id>`. The message ID survives context
 cherry-pick and rebase because those operations copy the message tree. It
 identifies one logical message across copies; the Git checkpoint IDs still
 differ. See [`git-cs.sh`](../git-cs.sh) `write_message`, `checkpoint`, and
@@ -54,27 +56,31 @@ message body is true or that all of its fields are well formed. See
 | `refs/cs/labels/<name>/<id>` | One exact checkpoint in a named group. |
 | `refs/cs/pins/<checkpoint>` | Keeps a linked checkpoint reachable for garbage collection. |
 | `refs/cs/remotes/<remote>/<name>` | Context branch fetched from a remote. |
+| `refs/cs/seen/<name>` | Read cursor kept by `sync` and `wait`; its reflog records when new messages were read. Local only. |
 
 ## `git cs` primitives
 
 | Primitive | What it does | How it works |
 |---|---|---|
-| `init` | Requires context for new code commits made through participating Git commands. | Sets local `commit.requireContext=true`; those paths enforce it and pin links they write. Plumbing `commit-tree` can still write an unlinked commit. |
-| `commit <branch> -m/-F ...` | Adds one typed message, optionally tied to existing code with `--code`. | Writes the `message` blob and a one-file tree, creates a checkpoint on the branch tip, then conditionally updates its ref. `--expect` compares against a caller-supplied tip; a lost race prints `STALE_TIP` and exits 75. |
+| `init` | Requires context for new code commits made through participating Git commands, and makes ordinary fetches bring context. | Sets local `commit.requireContext=true`; those paths enforce it and pin links they write. Plumbing `commit-tree` can still write an unlinked commit. Runs `remote` for every configured remote. |
+| `remote <name>` | Lets plain `git fetch` and `git pull` bring context. | Adds `refs/cs/` fetch refspecs to `remote.<name>.fetch`; running it again adds nothing. |
+| `commit <branch> -m/-F ...` | Adds one typed message, optionally tied to existing code with `--code`, naming the files it concerns with `--path`, or replacing an earlier message with `--supersedes`. | Writes the `message` blob and a one-file tree, creates a checkpoint on the branch tip, then conditionally updates its ref. The sender comes from `--from`, `GIT_CS_FROM`, `cs.from` or the author name. `--expect` takes a checkpoint or context branch name; a lost race prints `STALE_TIP` and exits 75. |
 | `show <checkpoint>` | Reads one message. | Reads `<checkpoint>:message`. Context branch names take precedence over same-named code refs. |
-| `context <checkpoint>` | Shows the effective messages available at a checkpoint. | Walks checkpoint ancestors oldest first, printing each logical message once with the short checkpoint ID where it first appears; excludes merge records, retractions, and every copy of a retracted message ID. |
+| `context <checkpoint>` | Shows the effective messages available at a checkpoint. | Reads every ancestor message in one `cat-file --batch` pass, oldest first, printing `<checkpoint> <from> <kind>: <body>` once per message ID; excludes merge records, retractions, and every copy of a retracted or superseded message ID. `--since`, `--last`, `--kind`, `--from` and `--path` narrow the output. |
+| `sync <me> <team>` | Catches up in one call. | Merges the team branch into `<me>`, prints only messages from others that `<me>` gained since its last sync, and moves `refs/cs/seen/<me>`. |
+| `wait <me> <team> --from <names>` | Blocks until named senders have published. | Syncs every two seconds until each sender has a message (optionally of a kind), then prints what is unseen as `sync` does; messages already seen are not repeated. Fails after a timeout naming who is missing. |
 | `log`, `diff` | Inspects checkpoint history or checkpoints unique to each side. | Uses Git log/revision walks over context commits. `diff` compares history membership, not a file snapshot. |
 | `branch`, `switch` | Starts a context branch; associates a named workspace with one. | Writes `refs/cs/heads/*` or a symbolic `refs/cs/workspaces/*` ref. `@workspace` resolves to the selected branch. |
 | `reset`, `reflog` | Moves a context branch or inspects its old tips. | Saves the prior tip in a recovery ref before the move; context branch updates use reflogs. |
 | `tag`, `label` | Names one checkpoint immutably or groups exact checkpoints. | Uses `refs/cs/tags/*` with create-only updates, or one `refs/cs/labels/*` ref per member. |
 | `merge` | Publishes another context history. | Fast-forwards when possible; otherwise writes a two-parent `merge` checkpoint. Messages remain in their own ancestor checkpoints, so there is no message-file conflict to resolve. `--retry` retries lost ref races with randomized backoff. |
-| `rebase`, `cherry-pick` | Copies context messages onto another history. | Reuses each message tree and its stable `id` in new checkpoint commits. Context rebase refuses merge checkpoints and saves the old tip. |
+| `rebase`, `cherry-pick` | Copies context messages onto another history. | Reuses each message tree and its stable `id` in new checkpoint commits. Context rebase does nothing when the branch already contains the target, fast-forwards when the target contains it, refuses merge checkpoints, and saves the old tip. |
 | `revert` | Retracts a context message from the effective context. | Appends a `retract` checkpoint naming the message ID. It hides all copies of that ID reached by the branch; it does not reverse code or tool effects. Merge and retract checkpoints cannot be retracted. |
 | `pin`, `unpin` | Retains or releases a checkpoint independently of branches. | Creates or deletes `refs/cs/pins/<checkpoint>`. Unpinning a linked checkpoint can make `fsck` report an unpinned link. |
 | `commit-code --context` | Creates a linked code commit through `git cs`. | Resolves and pins the checkpoint, then calls native `git commit --context`. It also pins when `commit.requireContext` is off. |
 | `links --code/--context` | Follows a link in either direction. | Reads the code commit header directly; the reverse direction scans selected code refs, defaulting to all code branches. |
-| `fsck [<code-revs>...]` | Reports broken context refs and code links. | Checks that `refs/cs/*` targets have checkpoint shape and a nonempty `id`, and that an optional `code:` names an existing commit. For selected code commits (all branches by default), it checks for exactly one link to a pinned checkpoint. |
-| `push`, `fetch`, `bundle` | Transfers context with code. | Pushes context heads, pins, tags and labels plus supplied code refspecs atomically; fetches remote context heads into `refs/cs/remotes/*` and the other shared refs directly; or writes those refs and supplied code refs to a bundle. Workspaces and recovery refs are not included. |
+| `fsck [<code-revs>...]` | Reports broken context refs and code links. | Checks that `refs/cs/*` targets have checkpoint shape and a nonempty `id`, and that the `code:` field of every checkpoint reachable from them names a commit present locally. For selected code commits (all branches by default), it checks for exactly one link, to a pinned checkpoint, and names links to non-checkpoints. |
+| `push`, `fetch`, `bundle` | Transfers context with code. | Pushes context heads, pins, tags and labels plus supplied code refspecs atomically, or with `--context <branch>` only the chosen branches and the pins the pushed code links to; fetches remote context heads into `refs/cs/remotes/*` and the other shared refs directly; or writes those refs and supplied code refs to a bundle. Workspaces and recovery refs are not included. |
 
 ## Native code-commit primitives
 
@@ -91,17 +97,21 @@ message body is true or that all of its fields are well formed. See
 
 1. Start with a code repository, then run `git cs init` and record a team brief
    with `git cs commit team -m '...' --kind plan --code HEAD`.
-2. Give each contributor a context branch (`git cs branch agent team`). Publish
-   a decision or contract there before dependent code is written. Other
-   contributors read it with `git cs context agent` or merge it into a shared
-   context branch with `git cs merge team agent --retry 10`.
+2. Give each contributor a context branch (`git cs branch agent team`) and a
+   sender name (`GIT_CS_FROM=agent`). Publish a decision or contract there,
+   with `--path` for the files it concerns, before dependent code is written,
+   and merge it into the shared context with `git cs merge team agent --retry 10`.
+   Others catch up with `git cs sync <their-branch> team`, or block with
+   `git cs wait <their-branch> team --from agent`.
 3. Commit code with `git cs commit-code --context agent -- -m '...'`, or use
    native `git commit --context <checkpoint>`. A code merge can use
    `git merge --context <checkpoint>`.
 4. Check new code commits with `git cs fsck BASE..HEAD` (replace `BASE` with the
    last code commit before context tracking), then use
-   `git cs push <remote> <code-refspec>` to send code and context together.
-   Receivers use `git cs fetch <remote>` to obtain the context refs.
+   `git cs push <remote> [--context <branch>] <code-refspec>` to send code and
+   context together. Receivers run `git cs remote <remote>` once (or
+   `git cs init`), after which ordinary `git fetch` and `git pull` bring the
+   context refs.
 
 The range in step 4 matters when a project has older, unlinked commits:
 unqualified `git cs fsck` checks all code branches and will flag them. The
@@ -117,19 +127,12 @@ before accepting them.
 
 ## Verification at this tip
 
-`make -j8` and a forced `make -B -j8 git git-cs` completed; the binary reports
-`git version 2.56.GIT`, and `git-cs` matches `git-cs.sh`
-byte for byte. `t/t9905-cs.sh` passed 35/35, `t/t7529-commit-context.sh`
-passed 47/47, and `cs-testing/cmdtable.sh` passed 45/45. The full Git shell
-suite completed 1,063 scripts with 32,696 successes, zero failures and 375
-expected breakages; its C unit target passed 261/261. An independent
-fresh-repository run published two context branches, linked and pinned a code
-commit, pushed code and context to a bare remote, then cloned and fetched the
-context into a second repository; the link resolved and scoped `git cs fsck`
-passed there. After the forced rebuild, another fresh-repository run checked
-`git merge --context`, transfer to a second clone, and `fsck`. It also
-confirmed that an unlinked `git commit-tree` commit can be created with the
-requirement on and that `git cs fsck` reports it. A separate stock-Git check
-confirmed the same detection for an unlinked commit made by Apple Git. See
-[RESULTS.md](RESULTS.md) for the full-suite path and the two live
-parallel-agent projects.
+A forced `make -B -j8` completed and the binary reports `git version 2.56.GIT`.
+`t/t9905-cs.sh` passed 47/47 and `t/t7529-commit-context.sh` 47/47, each
+twice; `cs-testing/cmdtable.sh` passed 58/58. The full Git shell suite
+completed 1,063 scripts with 32,706 successes, zero failures and 375 expected
+breakages, and the C unit target passed 261/261. Three agents then shared all
+nine messages through `sync` and `wait`, every code commit carried one pinned
+link, and a fresh clone resolved 6/6 links. See [RESULTS.md](RESULTS.md),
+which also keeps the 2026-10-16 independent checks and the two-agent `ledger`
+project.

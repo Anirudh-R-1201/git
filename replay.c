@@ -93,15 +93,18 @@ static struct commit *create_commit(struct repository *repo,
 	char *author = NULL;
 	char *sign_commit = NULL; /* FIXME: cli users might want to sign again */
 	struct commit_extra_header *extra = NULL;
-	struct strbuf msg = STRBUF_INIT;
+	struct strbuf msg = STRBUF_INIT, err = STRBUF_INIT;
 	const char *out_enc = get_commit_output_encoding();
 	const char *message = repo_logmsg_reencode(repo, based_on,
 						   NULL, out_enc);
 	const char *orig_message = NULL;
-	const char *exclude_gpgsig[] = { "gpgsig", "gpgsig-sha256", NULL };
+	/* A revert is not made from the context of the commit it reverts. */
+	const char *exclude[] = { "gpgsig", "gpgsig-sha256",
+				  mode == REPLAY_MODE_REVERT ? "context" : NULL,
+				  NULL };
 
 	commit_list_insert(parent, &parents);
-	extra = read_commit_extra_headers(based_on, exclude_gpgsig);
+	extra = read_commit_extra_headers(based_on, exclude);
 	if (mode == REPLAY_MODE_REVERT) {
 		generate_revert_message(&msg, based_on, repo);
 		/* For revert, use current user as author (NULL = use default) */
@@ -113,6 +116,11 @@ static struct commit *create_commit(struct repository *repo,
 		BUG("unexpected replay mode %d", mode);
 	}
 	reset_ident_date();
+	if (repo_keep_context(repo, extra, KEEP_CONTEXT_REQUIRED, &err)) {
+		error(_("cannot replay %s: %s"),
+		      oid_to_hex(&based_on->object.oid), err.buf);
+		goto out;
+	}
 	if (commit_tree_extended(msg.buf, msg.len, &tree->object.oid, parents,
 				 &ret, author, NULL, sign_commit, extra)) {
 		error(_("failed to write commit object"));
@@ -125,6 +133,7 @@ out:
 	repo_unuse_commit_buffer(repo, based_on, message);
 	free_commit_extra_headers(extra);
 	commit_list_free(parents);
+	strbuf_release(&err);
 	strbuf_release(&msg);
 	free(author);
 	return (struct commit *)obj;
@@ -484,8 +493,12 @@ int replay_revisions(struct rev_info *revs,
 							  mode, opts->empty);
 		}
 
-		if (!last_commit)
+		if (!last_commit) {
+			/* A clean merge whose commit could not be written. */
+			if (result.clean > 0)
+				result.clean = -1;
 			break;
+		}
 
 		/* Record commit -> last_commit mapping */
 		put_mapped_commit(replayed_commits, commit, last_commit);

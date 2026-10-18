@@ -954,6 +954,7 @@ integration_tests = [
   't7526-commit-pathspec-file.sh',
   't7527-builtin-fsmonitor.sh',
   't7528-signed-commit-ssh.sh',
+  't7529-commit-context.sh',
   't7600-merge.sh',
   't7601-merge-pull-config.sh',
   't7602-merge-octopus-many.sh',
@@ -1140,6 +1141,7 @@ integration_tests = [
   't9902-completion.sh',
   't9903-bash-prompt.sh',
   't9904-url-parse.sh',
+  't9905-cs.sh',
 ]
 
 benchmarks = [

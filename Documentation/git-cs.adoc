@@ -1,0 +1,280 @@
+git-cs(1)
+=========
+
+NAME
+----
+git-cs - Version captured context in a history separate from code
+
+SYNOPSIS
+--------
+[synopsis]
+git cs init
+git cs remote <name>
+git cs commit <branch> (-m <message> | -F <file>) [--kind <kind>] [--code <commit>] [--from <name>] [--supersedes <checkpoint>] [--path <path>]... [--expect <checkpoint>]
+git cs show <checkpoint>
+git cs context <checkpoint> [--since <checkpoint>] [--last <n>] [--kind <kinds>] [--from <names>] [--path <path>]
+git cs sync <branch> <team> [<context-options>]
+git cs wait <branch> <team> --from <names> [--kind <kinds>] [--timeout <seconds>]
+git cs log <checkpoint>
+git cs diff <checkpoint> <checkpoint>
+git cs branch <name> <checkpoint>
+git cs switch [-c] <workspace> <branch> [<checkpoint>]
+git cs reset <branch> <checkpoint>
+git cs reflog <branch>
+git cs tag <name> <checkpoint>
+git cs label (add | remove) <name> <checkpoint>...
+git cs label resolve <name>
+git cs merge <branch> <checkpoint> [-m <message>] [--no-ff] [--retry <n>]
+git cs rebase <branch> <onto>
+git cs cherry-pick <branch> <checkpoint>
+git cs revert <branch> <checkpoint>
+git cs pin <checkpoint>...
+git cs unpin <checkpoint>...
+git cs commit-code --context <checkpoint> -- <git-commit-options>
+git cs fsck [<code-revs>...]
+git cs links (--code <commit> | --context <checkpoint> [<code-refs>...])
+git cs push <remote> [--context <branch>]... [<code-refspec>...]
+git cs fetch <remote> [--context <branch>]... [--force]
+git cs bundle <file> [<code-refs>...]
+
+DESCRIPTION
+-----------
+Record captured context, such as the messages and learnings of a coding
+agent, in a commit history of its own under `refs/cs/`, and link code
+commits to it. The context history branches and merges independently of
+the code; no `git cs` command moves a code ref or touches the working tree,
+except `commit-code`, which creates an ordinary code commit.
+
+A checkpoint is a commit whose tree holds a single file, `message`:
+
+------------
+kind: learning
+id: 3f9c0b2e5d8a4c71b6e0f2a9d4c8b1e7
+from: alpha
+code: <commit>
+
+Use WAL mode; readers must not block writers.
+------------
+
+`kind` names what the message is and `from` who recorded it. `id` is a
+random identifier given to the message when it is recorded and kept by
+every copy that `cherry-pick`, `rebase` or `merge` makes, so copies of one
+message are the same message. A copy also keeps the original author and
+author date, while its committer and commit date record who copied it and
+when. `code` optionally names the code commit the message was captured
+against, and any number of `path` fields name the files or directories it
+is about. The body follows the blank line. The
+context at a checkpoint is the checkpoint together with its ancestors.
+
+The two histories are linked in one direction each:
+
+* A code commit names the checkpoint it was made from in a `context`
+  header of the commit object (see `--context` in linkgit:git-commit[1]).
+  It names at most one, and `git cs init` makes naming one mandatory.
+* A checkpoint may name one code commit in its `code` field. It cannot
+  name a commit that links back to it, as each would need the other's
+  ID first; it names the code it was captured against instead.
+
+ARGUMENTS
+---------
+Arguments named _<checkpoint>_ may be a context branch name,
+`@<workspace>`, or any revision that resolves to a checkpoint. A context
+branch name wins over a code ref of the same name; code commits are
+refused.
+
+COMMANDS
+--------
+`init`::
+	Set `commit.requireContext` so that `git commit` refuses code
+	commits that do not name their context, pins the checkpoint of
+	every one that does, and run `remote` for every configured remote.
+
+`remote <name>`::
+	Add fetch refspecs to remote _<name>_ so that ordinary
+	`git fetch` and `git pull` also bring its context branches (into
+	`refs/cs/remotes/<name>/`), pins, tags and labels. Running it again
+	adds nothing.
+
+`commit <branch> (-m <message> | -F <file>) [--kind <kind>] [--code <commit>] [--from <name>] [--supersedes <checkpoint>] [--path <path>]... [--expect <checkpoint>]`::
+	Record a message as a new checkpoint on top of _<branch>_,
+	creating the branch if needed, and print its ID. _<kind>_
+	(default `message`) uses lowercase letters, digits and `-`;
+	`merge` and `retract` are reserved for `merge` and `revert`.
+	The sender is _<name>_, else `$GIT_CS_FROM`, else `cs.from`, else
+	the author name, with characters other than letters, digits,
+	`.`, `_` and `-` replaced by `-`. `--supersedes` records that the
+	message replaces _<checkpoint>_, for example a correction or the
+	resolution of two contradicting notes; `context` then shows only
+	the new message. Each `--path` names a file or directory the
+	message is about.
+	The checkpoint's subject is `<kind>: <first line>`. With
+	`--expect`, refuse with exactly `STALE_TIP` on standard error
+	(exit status 75) unless the branch is still at _<checkpoint>_,
+	which may be given as a context branch name.
+
+`show <checkpoint>`::
+	Print the typed message stored in _<checkpoint>_.
+
+`context <checkpoint> [--since <checkpoint>] [--last <n>] [--kind <kinds>] [--from <names>] [--path <path>]`::
+	Print every message leading to _<checkpoint>_, oldest first, as
+	`<checkpoint> <from> <kind>: <body>`. A message that arrived more than
+	once, such as by both a cherry-pick and a merge, is printed once,
+	where it first appears. Merge checkpoints, retractions, and every
+	copy of the messages that were retracted or superseded are left out.
+	`--since` leaves out messages the given checkpoint already has,
+	`--kind` and `--from` keep only the comma-separated kinds or
+	senders, `--path` keeps messages about _<path>_, a directory
+	containing it, or a file inside it, along with messages that name
+	no path, and `--last` keeps the last _<n>_ of what remains.
+	Older messages without a `from` field appear with an empty sender;
+	a named `--from` filter excludes them.
+
+`sync <branch> <team> [<context-options>]`::
+	Merge _<team>_ into _<branch>_, then print the messages that
+	_<branch>_ gained since its previous sync, leaving out the
+	caller's own (see `--from` under `commit`). New retractions are
+	shown as notices, so earlier advice is not silently withdrawn.
+	The context options
+	narrow them as for `context`. Filtered calls leave the read position
+	unchanged so messages hidden by a filter remain available on the
+	next unfiltered `sync`. The position is kept in
+	`refs/cs/seen/<branch>`, whose reflog records when new messages
+	were read.
+
+`wait <branch> <team> --from <names> [--kind <kinds>] [--timeout <seconds>]`::
+	Merge _<team>_ into _<branch>_ every two seconds until each of the
+	comma-separated senders has a message there, of one of _<kinds>_
+	if given, then print what is new as `sync` does. Fails after
+	_<seconds>_ (default 180), naming the senders still missing.
+
+`log <checkpoint>`::
+	List the checkpoints leading to _<checkpoint>_, newest first, with
+	their dates, senders and subjects.
+
+`diff <checkpoint> <checkpoint>`::
+	List the checkpoints only the first side has (`-`) and only the
+	second side has (`+`).
+
+`branch <name> <checkpoint>`::
+	Create context branch _<name>_ at _<checkpoint>_.
+
+`switch [-c] <workspace> <branch> [<checkpoint>]`::
+	Select _<branch>_ for _<workspace>_, creating it at
+	_<checkpoint>_ first with `-c`. Any _<branch>_ argument may then
+	be written `@<workspace>`. Workspaces are never transferred.
+
+`reset <branch> <checkpoint>`::
+	Move _<branch>_ to _<checkpoint>_, saving the old tip in
+	`refs/cs/recovery/<branch>`.
+
+`reflog <branch>`::
+	Show every tip _<branch>_ has had.
+
+`tag <name> <checkpoint>`::
+	Name one checkpoint. Tags never move.
+
+`label add <name> <checkpoint>...`::
+`label remove <name> <checkpoint>...`::
+`label resolve <name>`::
+	Group exact checkpoints, such as everything for one ticket.
+	Removing a label deletes the local ref; push and fetch do not
+	propagate that deletion.
+
+`merge <branch> <checkpoint> [-m <message>] [--no-ff] [--retry <n>]`::
+	Merge _<checkpoint>_ into _<branch>_ and print the resulting tip.
+	A descendant is fast-forwarded unless `--no-ff` is given;
+	otherwise a checkpoint of kind `merge` with both tips as parents
+	is recorded, holding _<message>_ if given. Merges never conflict,
+	because each checkpoint holds its own message. Standard error
+	says `Fast-forward`, `Merge checkpoint` or `Already up to date`.
+	With `--retry`, a merge that loses a race to another writer is
+	retried up to _<n>_ times after a randomized, growing delay.
+
+`rebase <branch> <onto>`::
+	Copy each checkpoint of _<branch>_ that _<onto>_ lacks on top of
+	it, keeping each message, and save the old tip as for `reset`.
+	A message whose `id` is already on _<onto>_ is not copied again.
+	Replayed checkpoints get new commit IDs; use `show` to read the
+	stable message ID when tracking a note across a rebase.
+	Merge checkpoints are refused. A branch that already contains
+	_<onto>_ is left alone (`Already up to date`), and one that
+	_<onto>_ contains is fast-forwarded, so polling never rewrites
+	checkpoints.
+
+`cherry-pick <branch> <checkpoint>`::
+	Copy the message of _<checkpoint>_ onto _<branch>_.
+
+`revert <branch> <checkpoint>`::
+	Record a `retract` checkpoint naming the id of _<checkpoint>_ in
+	a `retracts` field, which hides it and every copy of it from
+	`context`, wherever the copies are. Merge and retract checkpoints
+	cannot be retracted. This restores
+	context only; it does not undo tool effects.
+
+`pin <checkpoint>...`::
+`unpin <checkpoint>...`::
+	Keep checkpoints reachable through `refs/cs/pins/` so garbage
+	collection never removes them, or release them.
+
+`commit-code --context <checkpoint> -- <git-commit-options>`::
+	Pin _<checkpoint>_ and run `git commit --context <checkpoint>`.
+	After `init`, a plain `git commit --context` pins it as well;
+	`commit-code` also accepts context branch names and pins in
+	repositories without `init`.
+
+`fsck [<code-revs>...]`::
+	Check that every checkpoint reachable from `refs/cs/` has checkpoint
+	shape and an `id`, that every such checkpoint whose `code` field
+	names a commit has that commit locally (a context-only transfer can
+	leave it out), and that every code
+	commit selected by _<code-revs>_ (default: all branches) names
+	exactly one pinned checkpoint, reporting a link to anything that
+	is not a checkpoint as such. Pass a range such as
+	`origin/master..` to skip history written before context was
+	tracked.
+
+`links --code <commit>`::
+`links --context <checkpoint> [<code-refs>...]`::
+	Print the checkpoint named by _<commit>_, or the code commits
+	reachable from _<code-refs>_ (default: all branches) that name
+	_<checkpoint>_.
+
+`push <remote> [--context <branch>]... [<code-refspec>...]`::
+	Push context branches, pins, tags and labels, together with any
+	_<code-refspec>_, in one atomic push: either all refs update or
+	none do. With `--context`, push only the named context branches
+	and the pins of checkpoints that the pushed code links to, so an
+	unrelated stale branch cannot block the push. Code named in a
+	checkpoint's `code` field is not sent unless it is pushed too.
+
+`fetch <remote> [--context <branch>]... [--force]`::
+	Fetch context branches into `refs/cs/remotes/<remote>/` and
+	pins, tags and labels as they are. `--context` limits which
+	context branches are fetched. A rewritten tracking branch is
+	rejected unless `--force` is given with `--context`; its old tip
+	is saved in `refs/cs/fetch-recovery/<remote>/<branch>` before the
+	update. Nothing is merged.
+	In a fresh clone, run `git cs remote origin` before ordinary
+	`git fetch` or `git pull`, or run `git cs fetch origin` explicitly.
+	Fetch linked context before using this Git binary to cherry-pick
+	or rebase code commits that name it.
+
+`bundle <file> [<code-refs>...]`::
+	Write context refs and _<code-refs>_ to a bundle. Receive it
+	with `git fetch <file> 'refs/cs/*:refs/cs/*'`.
+
+EXAMPLES
+--------
+------------
+$ git cs init
+$ git cs commit agent -m "Investigate SQLite" --code HEAD
+$ git cs commit agent -m "Use WAL mode" --kind learning
+$ git cs merge main agent --retry 10
+$ git cs commit-code --context agent -- -m "Enable WAL"
+$ git cs context agent
+$ git cs push origin HEAD:refs/heads/main
+------------
+
+GIT
+---
+Part of the linkgit:git[1] suite

@@ -223,6 +223,15 @@ static int convert_commit_object(struct repository *repo,
 			strbuf_release(&tag);
 			strbuf_release(&new_tag);
 		}
+		else if (((bufptr + 8) < eol) && !memcmp(bufptr, "context ", 8))
+		{
+			if (parse_oid_hex_algop(bufptr + 8, &oid, &p, from) || p != eol)
+				return error(_("bad %s in commit"), "context");
+			if (repo_oid_to_algop(repo, &oid, to, &mapped_oid))
+				return error(_("unable to map %s %s in commit object"),
+					     "context", oid_to_hex(&oid));
+			strbuf_addf(out, "context %s\n", oid_to_hex(&mapped_oid));
+		}
 		else if (((bufptr + 7) < tail) && !memcmp(bufptr, "author ", 7))
 			strbuf_add(out, bufptr, (eol - bufptr) + 1);
 		else if (((bufptr + 10) < tail) && !memcmp(bufptr, "committer ", 10))

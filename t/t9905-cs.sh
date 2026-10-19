@@ -720,6 +720,138 @@ test_expect_success 'bundle carries context offline' '
 	git -C offline cs show "$(git -C offline cs links --code in)"
 '
 
+test_expect_success 'commit --expect none refuses a branch someone else created' '
+	first=$(git cs commit expect-new -m first --expect none) &&
+	test_expect_code 75 git cs commit expect-new -m second --expect none 2>err &&
+	test_grep "^STALE_TIP\$" err &&
+	test "$(git rev-parse refs/cs/heads/expect-new)" = "$first"
+'
+
+test_expect_success 'a new branch forks from cs.base unless --root is given' '
+	test_config cs.base main &&
+	based=$(git cs commit based -m "forked note") &&
+	test "$(git rev-parse $based^)" = "$(git rev-parse refs/cs/heads/main)" &&
+	rooted=$(git cs commit rooted -m "fresh tree" --root) &&
+	test_must_fail git rev-parse -q --verify $rooted^
+'
+
+test_expect_success 'commit --no-update prepares chained checkpoints for one transaction' '
+	tip=$(git rev-parse refs/cs/heads/main) &&
+	one=$(git cs commit main -m prepared-one --no-update) &&
+	two=$(git cs commit main -m prepared-two --no-update --onto $one) &&
+	test "$(git rev-parse refs/cs/heads/main)" = "$tip" &&
+	test "$(git rev-parse $two^)" = "$one" &&
+	test "$(git rev-parse $one^)" = "$tip" &&
+	printf "start\nupdate refs/cs/heads/main %s %s\nprepare\ncommit\n" $two $tip |
+		git update-ref --stdin &&
+	git cs context main --last 2 >actual &&
+	test_grep "message: prepared-one" actual &&
+	test_grep "message: prepared-two" actual &&
+	test_must_fail git cs commit main -m stray --onto $one 2>err &&
+	test_grep "requires --no-update" err
+'
+
+test_expect_success 'cherry-pick and revert --no-update leave the branch alone' '
+	git cs branch staged $base &&
+	tip=$(git rev-parse refs/cs/heads/staged) &&
+	picked=$(git cs cherry-pick staged topic --no-update) &&
+	retracted=$(git cs revert staged $picked --no-update --onto $picked) &&
+	test "$(git rev-parse refs/cs/heads/staged)" = "$tip" &&
+	test "$(git rev-parse $retracted^)" = "$picked" &&
+	test "$(git rev-parse $picked^)" = "$tip"
+'
+
+test_expect_success 'pin and unpin change all named pins or none' '
+	git cs branch pin-a $base &&
+	a=$(git cs commit pin-a -m pinned-a) &&
+	test_must_fail git cs pin $a nope &&
+	test_must_fail git rev-parse -q --verify refs/cs/pins/$a &&
+	git cs pin $a &&
+	test_must_fail git cs unpin $a nope &&
+	git rev-parse -q --verify refs/cs/pins/$a &&
+	git cs unpin $a &&
+	test_must_fail git rev-parse -q --verify refs/cs/pins/$a
+'
+
+test_expect_success 'acks record which notes a recipient used' '
+	git cs branch ack-team $base &&
+	contract=$(git cs commit ack-team -m contract --from api) &&
+	git cs commit ack-team -m "other note" --from api &&
+	git cs commit ack-team -m "used the contract" --from client --acks $contract &&
+	git cs show refs/cs/heads/ack-team | sed -n "s/^acks: //p" >actual &&
+	git cs show $contract | sed -n "s/^id: //p" >expect &&
+	test_cmp expect actual &&
+	git cs context ack-team --acked-by client >actual &&
+	test_grep "api message: contract" actual &&
+	test_line_count = 1 actual &&
+	git cs context ack-team --acked-by nobody >actual &&
+	test_must_be_empty actual &&
+	git cs context ack-team --unacked --from api >actual &&
+	test_grep "api message: other note" actual &&
+	test_line_count = 1 actual &&
+	test_must_fail git cs context ack-team --acked-by client --unacked
+'
+
+test_expect_success 'context --format brief and --max-bytes bound what is printed' '
+	git cs branch bounded $base &&
+	printf "first line\nmore detail\n" >msg &&
+	git cs commit bounded -F msg &&
+	git cs commit bounded -m newest &&
+	git cs context bounded --format brief >actual &&
+	test_grep "message: first line\$" actual &&
+	test_grep ! "more detail" actual &&
+	git cs context bounded | tail -1 >newest &&
+	git cs context bounded --max-bytes $(wc -c <newest) >actual &&
+	test_cmp newest actual &&
+	git cs context bounded --max-bytes 1 >actual &&
+	test_must_be_empty actual &&
+	test_must_fail git cs context bounded --max-bytes many
+'
+
+test_expect_success 'integrate merges context branches and links the code merge to them' '
+	git init integrate &&
+	(
+		cd integrate &&
+		test_commit start &&
+		git cs commit team -m "team plan" &&
+		git cs branch ctx-a team &&
+		git cs branch ctx-b team &&
+		git cs commit ctx-a -m "a contract" --from a &&
+		git cs commit ctx-b -m "b contract" --from b &&
+		git checkout -b side &&
+		test_commit side-change &&
+		git checkout - &&
+		test_commit main-change &&
+		git cs integrate team ctx-a ctx-b -- --no-edit side &&
+		git rev-parse HEAD^2 &&
+		ctx=$(git cs links --code HEAD) &&
+		test "$ctx" = "$(git rev-parse refs/cs/heads/team)" &&
+		git rev-parse -q --verify refs/cs/pins/$ctx &&
+		git cs context team >actual &&
+		test_grep "a message: a contract" actual &&
+		test_grep "b message: b contract" actual
+	)
+'
+
+test_expect_success 'heads lists each branch with its tip, message count and newest message' '
+	git init heads &&
+	(
+		cd heads &&
+		test_commit start &&
+		git cs commit h1 -m one --from x &&
+		tip=$(git cs commit h1 -m two --from x) &&
+		git cs heads >actual &&
+		echo "h1 $(git rev-parse --short=10 $tip) 2 x message: two" >expect &&
+		test_cmp expect actual &&
+		git cs commit h2 -m based --from y --root &&
+		git config cs.base h1 &&
+		git cs branch h3 h1 &&
+		git cs commit h3 -m later --from z &&
+		git cs heads >actual &&
+		test_grep "^h3 [0-9a-f]* 1 z message: later\$" actual
+	)
+'
+
 test_expect_success 'no temporary files are left behind' '
 	test_path_is_missing .git/cs-tmp.*
 '

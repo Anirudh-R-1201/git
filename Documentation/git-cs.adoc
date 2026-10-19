@@ -10,9 +10,10 @@ SYNOPSIS
 [synopsis]
 git cs init
 git cs remote <name>
-git cs commit <branch> (-m <message> | -F <file>) [--kind <kind>] [--code <commit>] [--from <name>] [--supersedes <checkpoint>] [--path <path>]... [--expect <checkpoint>]
+git cs commit <branch> (-m <message> | -F <file>) [--kind <kind>] [--code <commit>] [--from <name>] [--supersedes <checkpoint>] [--acks <checkpoint>]... [--path <path>]... [--expect (<checkpoint> | none)] [--root] [--no-update [--onto <checkpoint>]]
 git cs show <checkpoint>
-git cs context <checkpoint> [--since <checkpoint>] [--last <n>] [--kind <kinds>] [--from <names>] [--path <path>]
+git cs context <checkpoint> [--since <checkpoint>] [--last <n>] [--kind <kinds>] [--from <names>] [--path <path>] [--acked-by <names> | --unacked] [--max-bytes <n>] [--format (full | brief)]
+git cs heads
 git cs sync <branch> <team> [<context-options>]
 git cs wait <branch> <team> --from <names> [--kind <kinds>] [--timeout <seconds>]
 git cs log <checkpoint>
@@ -26,11 +27,12 @@ git cs label (add | remove) <name> <checkpoint>...
 git cs label resolve <name>
 git cs merge <branch> <checkpoint> [-m <message>] [--no-ff] [--retry <n>]
 git cs rebase <branch> <onto>
-git cs cherry-pick <branch> <checkpoint>
-git cs revert <branch> <checkpoint>
+git cs cherry-pick <branch> <checkpoint> [--no-update [--onto <checkpoint>]]
+git cs revert <branch> <checkpoint> [--no-update [--onto <checkpoint>]]
 git cs pin <checkpoint>...
 git cs unpin <checkpoint>...
 git cs commit-code --context <checkpoint> -- <git-commit-options>
+git cs integrate <branch> <context-branch>... [-- <git-merge-options>]
 git cs fsck [<code-revs>...]
 git cs links (--code <commit> | --context <checkpoint> [<code-refs>...])
 git cs push <remote> [--context <branch>]... [<code-refspec>...]
@@ -95,7 +97,7 @@ COMMANDS
 	`refs/cs/remotes/<name>/`), pins, tags and labels. Running it again
 	adds nothing.
 
-`commit <branch> (-m <message> | -F <file>) [--kind <kind>] [--code <commit>] [--from <name>] [--supersedes <checkpoint>] [--path <path>]... [--expect <checkpoint>]`::
+`commit <branch> (-m <message> | -F <file>) [--kind <kind>] [--code <commit>] [--from <name>] [--supersedes <checkpoint>] [--acks <checkpoint>]... [--path <path>]... [--expect (<checkpoint> | none)] [--root] [--no-update [--onto <checkpoint>]]`::
 	Record a message as a new checkpoint on top of _<branch>_,
 	creating the branch if needed, and print its ID. _<kind>_
 	(default `message`) uses lowercase letters, digits and `-`;
@@ -105,17 +107,28 @@ COMMANDS
 	`.`, `_` and `-` replaced by `-`. `--supersedes` records that the
 	message replaces _<checkpoint>_, for example a correction or the
 	resolution of two contradicting notes; `context` then shows only
-	the new message. Each `--path` names a file or directory the
-	message is about.
+	the new message. Each `--acks` records that this message used
+	_<checkpoint>_'s message, so `context --acked-by` can show what a
+	recipient actually relied on. Each `--path` names a file or
+	directory the message is about.
 	The checkpoint's subject is `<kind>: <first line>`. With
 	`--expect`, refuse with exactly `STALE_TIP` on standard error
 	(exit status 75) unless the branch is still at _<checkpoint>_,
-	which may be given as a context branch name.
+	which may be given as a context branch name; `--expect none`
+	refuses unless the branch does not exist yet, so two writers
+	cannot both create it.
+	A new branch starts from the checkpoint named by `cs.base` when
+	that is set, and otherwise has no parent; `--root` starts it with
+	no parent regardless.
+	With `--no-update`, create and print the checkpoint without moving
+	any ref, on top of _<branch>_'s tip or of the checkpoint given with
+	`--onto`; a caller can chain several such checkpoints and publish
+	them together with `git update-ref --stdin`.
 
 `show <checkpoint>`::
 	Print the typed message stored in _<checkpoint>_.
 
-`context <checkpoint> [--since <checkpoint>] [--last <n>] [--kind <kinds>] [--from <names>] [--path <path>]`::
+`context <checkpoint> [--since <checkpoint>] [--last <n>] [--kind <kinds>] [--from <names>] [--path <path>] [--acked-by <names> | --unacked] [--max-bytes <n>] [--format (full | brief)]`::
 	Print every message leading to _<checkpoint>_, oldest first, as
 	`<checkpoint> <from> <kind>: <body>`. A message that arrived more than
 	once, such as by both a cherry-pick and a merge, is printed once,
@@ -128,6 +141,16 @@ COMMANDS
 	no path, and `--last` keeps the last _<n>_ of what remains.
 	Older messages without a `from` field appear with an empty sender;
 	a named `--from` filter excludes them.
+	`--acked-by` keeps messages that one of the comma-separated senders
+	acknowledged with `commit --acks`, and `--unacked` those nobody
+	acknowledged. `--format brief` prints only the first line of each
+	message, and `--max-bytes` then keeps the newest messages whose
+	lines fit in _<n>_ bytes, so a caller can bound what it replays.
+
+`heads`::
+	Print one line per context branch: its name, its tip, the number
+	of messages it has beyond `cs.base` (or in all, without one), and
+	the sender and subject of its newest message.
 
 `sync <branch> <team> [<context-options>]`::
 	Merge _<team>_ into _<branch>_, then print the messages that
@@ -165,7 +188,8 @@ COMMANDS
 
 `reset <branch> <checkpoint>`::
 	Move _<branch>_ to _<checkpoint>_, saving the old tip in
-	`refs/cs/recovery/<branch>`.
+	`refs/cs/recovery/<branch>`. Both refs change in one transaction,
+	as they do for `rebase`.
 
 `reflog <branch>`::
 	Show every tip _<branch>_ has had.
@@ -177,6 +201,7 @@ COMMANDS
 `label remove <name> <checkpoint>...`::
 `label resolve <name>`::
 	Group exact checkpoints, such as everything for one ticket.
+	All named checkpoints are labelled or unlabelled, or none are.
 	Removing a label deletes the local ref; push and fetch do not
 	propagate that deletion.
 
@@ -201,26 +226,36 @@ COMMANDS
 	_<onto>_ contains is fast-forwarded, so polling never rewrites
 	checkpoints.
 
-`cherry-pick <branch> <checkpoint>`::
-	Copy the message of _<checkpoint>_ onto _<branch>_.
+`cherry-pick <branch> <checkpoint> [--no-update [--onto <checkpoint>]]`::
+	Copy the message of _<checkpoint>_ onto _<branch>_. `--no-update`
+	and `--onto` work as for `commit`.
 
-`revert <branch> <checkpoint>`::
+`revert <branch> <checkpoint> [--no-update [--onto <checkpoint>]]`::
 	Record a `retract` checkpoint naming the id of _<checkpoint>_ in
 	a `retracts` field, which hides it and every copy of it from
 	`context`, wherever the copies are. Merge and retract checkpoints
 	cannot be retracted. This restores
-	context only; it does not undo tool effects.
+	context only; it does not undo tool effects. `--no-update` and
+	`--onto` work as for `commit`.
 
 `pin <checkpoint>...`::
 `unpin <checkpoint>...`::
 	Keep checkpoints reachable through `refs/cs/pins/` so garbage
-	collection never removes them, or release them.
+	collection never removes them, or release them. All named
+	checkpoints change, or none do.
 
 `commit-code --context <checkpoint> -- <git-commit-options>`::
 	Pin _<checkpoint>_ and run `git commit --context <checkpoint>`.
 	After `init`, a plain `git commit --context` pins it as well;
 	`commit-code` also accepts context branch names and pins in
 	repositories without `init`.
+
+`integrate <branch> <context-branch>... [-- <git-merge-options>]`::
+	Merge each _<context-branch>_ into _<branch>_ as `merge --retry 10`
+	does, pin the resulting checkpoint and run `git merge --context`
+	with it and _<git-merge-options>_. A code merge names only one
+	checkpoint, so this gives a merge of several contributors' code
+	one context that covers all of them.
 
 `fsck [<code-revs>...]`::
 	Check that every checkpoint reachable from `refs/cs/` has checkpoint

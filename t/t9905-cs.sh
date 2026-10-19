@@ -808,6 +808,41 @@ test_expect_success 'context --format brief and --max-bytes bound what is printe
 	test_must_fail git cs context bounded --max-bytes many
 '
 
+test_expect_success 'context --format json prints one record per message with full ids' '
+	git cs branch machine $base &&
+	note=$(git cs commit machine -m contract --from api --path src/a.py --path src --code HEAD) &&
+	printf "quote \" back\\\\slash\ttab\001ctl\nsecond\n" >msg &&
+	used=$(git cs commit machine -F msg --from client --acks $note) &&
+	git cs context machine --format json --from api,client >actual &&
+	cat >expect.in <<-\EOF &&
+	{"checkpoint":"@NOTE@","id":"@NOTE_ID@","kind":"message","from":"api","paths":["src/a.py","src"],"code":"@CODE@","supersedes":null,"retracts":null,"acks":[],"acked_by":["client"],"body":"contract"}
+	{"checkpoint":"@USED@","id":"@USED_ID@","kind":"message","from":"client","paths":[],"code":null,"supersedes":null,"retracts":null,"acks":["@NOTE_ID@"],"acked_by":[],"body":"quote \" back\\slash\ttab\u0001ctl\nsecond"}
+	EOF
+	sed -e "s/@NOTE@/$note/" -e "s/@USED@/$used/" -e "s/@CODE@/$(git rev-parse HEAD)/" \
+		-e "s/@NOTE_ID@/$(git cs show $note | sed -n "s/^id: //p")/g" \
+		-e "s/@USED_ID@/$(git cs show $used | sed -n "s/^id: //p")/" expect.in >expect &&
+	test_cmp expect actual &&
+	git cs context machine --format json --from client --max-bytes $(tail -1 actual | wc -c) >bounded &&
+	tail -1 actual >expect &&
+	test_cmp expect bounded &&
+	test_must_fail git cs context machine --format yaml
+'
+
+test_expect_success 'sync --format json reports retractions as retract records' '
+	git cs branch json-team $base &&
+	git cs branch json-me $base &&
+	note=$(git cs commit json-team -m obsolete --from x) &&
+	git cs sync json-me json-team >/dev/null &&
+	retraction=$(GIT_CS_FROM=x git cs revert json-team $note) &&
+	git cs sync json-me json-team --format json >actual &&
+	test_line_count = 1 actual &&
+	test_grep "^{\"checkpoint\":\"$retraction\"," actual &&
+	test_grep "\"kind\":\"retract\",\"from\":\"x\"" actual &&
+	test_grep "\"retracts\":\"$(git cs show $note | sed -n "s/^id: //p")\"" actual &&
+	git cs sync json-me json-team --format json >again &&
+	test_must_be_empty again
+'
+
 test_expect_success 'integrate merges context branches and links the code merge to them' '
 	git init integrate &&
 	(

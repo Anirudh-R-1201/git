@@ -12,7 +12,7 @@ git cs init
 git cs remote <name>
 git cs commit <branch> (-m <message> | -F <file>) [--kind <kind>] [--code <commit>] [--from <name>] [--supersedes <checkpoint>] [--acks <checkpoint>]... [--path <path>]... [--expect (<checkpoint> | none)] [--root] [--no-update [--onto <checkpoint>]]
 git cs show <checkpoint>
-git cs context <checkpoint> [--since <checkpoint>] [--last <n>] [--kind <kinds>] [--from <names>] [--path <path>] [--acked-by <names> | --unacked] [--max-bytes <n>] [--format (full | brief)]
+git cs context <checkpoint> [--since <checkpoint>] [--last <n>] [--kind <kinds>] [--from <names>] [--path <path>] [--acked-by <names> | --unacked] [--max-bytes <n>] [--format (full | brief | json)]
 git cs heads
 git cs sync <branch> <team> [<context-options>]
 git cs wait <branch> <team> --from <names> [--kind <kinds>] [--timeout <seconds>]
@@ -128,7 +128,7 @@ COMMANDS
 `show <checkpoint>`::
 	Print the typed message stored in _<checkpoint>_.
 
-`context <checkpoint> [--since <checkpoint>] [--last <n>] [--kind <kinds>] [--from <names>] [--path <path>] [--acked-by <names> | --unacked] [--max-bytes <n>] [--format (full | brief)]`::
+`context <checkpoint> [--since <checkpoint>] [--last <n>] [--kind <kinds>] [--from <names>] [--path <path>] [--acked-by <names> | --unacked] [--max-bytes <n>] [--format (full | brief | json)]`::
 	Print every message leading to _<checkpoint>_, oldest first, as
 	`<checkpoint> <from> <kind>: <body>`. A message that arrived more than
 	once, such as by both a cherry-pick and a merge, is printed once,
@@ -146,6 +146,11 @@ COMMANDS
 	acknowledged. `--format brief` prints only the first line of each
 	message, and `--max-bytes` then keeps the newest messages whose
 	lines fit in _<n>_ bytes, so a caller can bound what it replays.
+	`--format json` prints one JSON object per line for programs, with
+	the keys `checkpoint` (the full ID), `id`, `kind`, `from`, `paths`,
+	`code`, `supersedes`, `retracts`, `acks` (message IDs this one
+	acknowledges), `acked_by` (senders who acknowledged it) and `body`
+	(the whole message); absent fields are `null` or `[]`.
 
 `heads`::
 	Print one line per context branch: its name, its tip, the number
@@ -158,9 +163,10 @@ COMMANDS
 	caller's own (see `--from` under `commit`). New retractions are
 	shown as notices, so earlier advice is not silently withdrawn.
 	The context options
-	narrow them as for `context`. Filtered calls leave the read position
-	unchanged so messages hidden by a filter remain available on the
-	next unfiltered `sync`. The position is kept in
+	narrow them as for `context`. Calls that leave messages out (any
+	option other than `--format`) keep the read position unchanged, so
+	messages hidden by a filter remain available on the next unfiltered
+	`sync`. The position is kept in
 	`refs/cs/seen/<branch>`, whose reflog records when new messages
 	were read.
 

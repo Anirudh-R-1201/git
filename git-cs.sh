@@ -6,7 +6,7 @@ USAGE='init
    or: remote <name>
    or: commit <branch> (-m <message> | -F <file>) [--kind <kind>] [--code <commit>] [--from <name>] [--supersedes <checkpoint>] [--acks <checkpoint>]... [--path <path>]... [--expect (<checkpoint> | none)] [--root] [--no-update [--onto <checkpoint>]]
    or: show <checkpoint>
-   or: context <checkpoint> [--since <checkpoint>] [--last <n>] [--kind <kinds>] [--from <names>] [--path <path>] [--acked-by <names> | --unacked] [--max-bytes <n>] [--format (full | brief)]
+   or: context <checkpoint> [--since <checkpoint>] [--last <n>] [--kind <kinds>] [--from <names>] [--path <path>] [--acked-by <names> | --unacked] [--max-bytes <n>] [--format (full | brief | json)]
    or: heads
    or: sync <branch> <team> [<context-options>]
    or: wait <branch> <team> --from <names> [--kind <kinds>] [--timeout <seconds>]
@@ -43,7 +43,7 @@ trap 'rm -f "$tmp".*' 0
 from=${GIT_CS_FROM:-$(git config cs.from)}
 from=${from:-$(git var GIT_AUTHOR_IDENT | sed 's/ <.*//; s/[^A-Za-z0-9._-]/-/g')}
 code= retracts= supersedes= paths= acks= message_file=
-f_kind= f_from= f_last= f_path= f_self= f_acked= f_unacked= f_bytes= f_brief=
+f_kind= f_from= f_last= f_path= f_self= f_acked= f_unacked= f_bytes= f_brief= f_json=
 
 # Apply the "git update-ref --stdin" commands on standard input in one
 # transaction: either every ref changes or none does.
@@ -156,7 +156,8 @@ checkpoint () {
 # "changes" also prints new retractions so a sync cannot silently hide old advice;
 # $f_acked and $f_unacked keep messages acknowledged by one of the comma list
 # $f_acked or by nobody, $f_bytes bounds the output to the newest messages that
-# fit, and $f_brief prints only each message's first line;
+# fit, $f_brief prints only each message's first line, and $f_json prints one
+# JSON object per message instead;
 # "codes" prints "<checkpoint> <code>".
 read_messages () {
 	mode=$1
@@ -172,7 +173,7 @@ read_messages () {
 	sed 's/.*/&:message &/' |
 	git cat-file --batch='%(objectsize) %(rest)' |
 	LC_ALL=C awk -v mode="$mode" -v kinds="$f_kind" -v froms="$f_from" -v last="$f_last" -v path="$f_path" -v self="$f_self" -v selected="$selected" \
-		-v acked="$f_acked" -v unacked="$f_unacked" -v bytes="$f_bytes" -v brief="$f_brief" '
+		-v acked="$f_acked" -v unacked="$f_unacked" -v bytes="$f_bytes" -v brief="$f_brief" -v json="$f_json" '
 	BEGIN {
 		if (selected != "")
 			while ((getline line < selected) > 0)
@@ -211,6 +212,40 @@ read_messages () {
 			skip = (need == 0)
 			need = 0
 		}
+	}
+	function quote(text,    c, ch) {
+		gsub(/\\/, "\\\\", text)
+		gsub(/"/, "\\\"", text)
+		gsub(/\n/, "\\n", text)
+		gsub(/\r/, "\\r", text)
+		gsub(/\t/, "\\t", text)
+		for (c = 1; c < 32; c++) {
+			ch = sprintf("%c", c)
+			if (index(text, ch))
+				gsub(ch, sprintf("\\u%04x", c), text)
+		}
+		return "\"" text "\""
+	}
+	function maybe(text) {
+		return text == "" ? "null" : quote(text)
+	}
+	function list(text, sep,    n, item, i, out) {
+		n = split(text, item, sep)
+		out = ""
+		for (i = 1; i <= n; i++)
+			if (item[i] != "")
+				out = out (out == "" ? "" : ",") quote(item[i])
+		return "[" out "]"
+	}
+	function record(id, kind, mid) {
+		if (!json)
+			return substr(id, 1, 10) " " val[id, "from"] " " kind ": " shown_body(id)
+		return "{\"checkpoint\":" quote(id) ",\"id\":" maybe(val[id, "id"]) \
+			",\"kind\":" quote(kind) ",\"from\":" maybe(val[id, "from"]) \
+			",\"paths\":" list(about[id], "\n") ",\"code\":" maybe(val[id, "code"]) \
+			",\"supersedes\":" maybe(val[id, "supersedes"]) ",\"retracts\":" maybe(val[id, "retracts"]) \
+			",\"acks\":" list(acks[id], "\n") ",\"acked_by\":" list(ackers[mid], ",") \
+			",\"body\":" quote(body[id]) "}"
 	}
 	function shown_body(id,    nl) {
 		nl = index(body[id], "\n")
@@ -255,13 +290,13 @@ read_messages () {
 				mid = val[id, "id"] != "" ? val[id, "id"] : id
 				if (mode == "changes" && kind == "retract" &&
 				    (selected == "" || chosen[id]) && (self == "" || val[id, "from"] != self))
-					out[nout++] = substr(id, 1, 10) " " val[id, "from"] " retract: " shown_body(id)
+					out[nout++] = record(id, "retract", mid)
 				if (kind != "merge" && kind != "retract" && !hidden[mid] &&
 				    !shown[mid]++ && (selected == "" || chosen[id]) &&
 				    wanted(kinds, kind) && wanted(froms, val[id, "from"]) && relevant(id) &&
 				    (self == "" || val[id, "from"] != self) &&
 				    (acked == "" || acked_by(mid)) && (!unacked || ackers[mid] == ""))
-					out[nout++] = substr(id, 1, 10) " " val[id, "from"] " " kind ": " shown_body(id)
+					out[nout++] = record(id, kind, mid)
 			}
 		}
 		first = last == "" || nout < last ? 0 : nout - last
@@ -386,7 +421,7 @@ cmd_context () {
 }
 
 context_options () {
-	since= f_kind= f_from= f_last= f_path= f_self= f_acked= f_unacked= f_bytes= f_brief=
+	since= f_kind= f_from= f_last= f_path= f_self= f_acked= f_unacked= f_bytes= f_brief= f_json=
 	while test $# -gt 0
 	do
 		case "$1" in
@@ -404,8 +439,9 @@ context_options () {
 			f_bytes=$2; shift ;;
 		--format)
 			case "$2" in
-			full) f_brief= ;;
-			brief) f_brief=1 ;;
+			full) f_brief= f_json= ;;
+			brief) f_brief=1 f_json= ;;
+			json) f_brief= f_json=1 ;;
 			*) die "unknown format: $2" ;;
 			esac
 			shift ;;
@@ -419,13 +455,13 @@ context_options () {
 cmd_sync () {
 	me=$1 team=$2
 	shift 2
-	filtered=$#
 	context_options "$@" &&
 	tip=$( (branch=$me name=$team noff= message=; merge_once) 2>/dev/null) || die "cannot sync $me with $team"
 	seen=$(git rev-parse -q --verify refs/cs/seen/"$me")
 	f_self=$from
 	read_messages changes $tip ${seen:+^$seen} ${since:+^$since} || return
-	test "$filtered" -ne 0 ||
+	# Only a sync that showed every new message moves the read position.
+	test -n "$since$f_kind$f_from$f_last$f_path$f_acked$f_unacked$f_bytes" ||
 	git update-ref --create-reflog -m "cs sync" refs/cs/seen/"$me" $tip
 }
 
@@ -449,7 +485,7 @@ cmd_wait () {
 		missing=
 		for who in $(echo "$waitfor" | tr , ' ')
 		do
-			f_from=$who f_kind=$kinds f_last= f_path= f_self= f_acked= f_unacked= f_bytes= f_brief=
+			f_from=$who f_kind=$kinds f_last= f_path= f_self= f_acked= f_unacked= f_bytes= f_brief= f_json=
 			test -n "$(read_messages context $tip)" || missing="$missing $who"
 		done
 		test -n "$missing" || break

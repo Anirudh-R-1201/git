@@ -22,11 +22,13 @@
 #include "hash-lookup.h"
 #include "wt-status.h"
 #include "advice.h"
+#include "config.h"
 #include "refs.h"
 #include "commit-reach.h"
 #include "setup.h"
 #include "shallow.h"
 #include "tree.h"
+#include "tree-walk.h"
 #include "hook.h"
 #include "parse.h"
 #include "object-file.h"
@@ -1408,6 +1410,119 @@ void append_merge_tag_headers(const struct commit_list *parents,
 	}
 }
 
+void append_context_header(const struct object_id *context,
+			   struct commit_extra_header ***tail)
+{
+	struct commit_extra_header *header;
+
+	CALLOC_ARRAY(header, 1);
+	header->key = xstrdup("context");
+	header->value = xstrdup(oid_to_hex(context));
+	header->len = strlen(header->value);
+	**tail = header;
+	*tail = &header->next;
+}
+
+int repo_is_context_checkpoint(struct repository *r,
+			       const struct object_id *oid)
+{
+	struct commit *commit = lookup_commit_reference_gently(r, oid, 1);
+	struct tree *tree;
+	struct tree_desc desc;
+	struct name_entry entry;
+
+	if (!commit || repo_parse_commit(r, commit) ||
+	    !(tree = repo_get_commit_tree(r, commit)) ||
+	    repo_parse_tree(r, tree))
+		return 0;
+	init_tree_desc(&desc, &tree->object.oid, tree->buffer, tree->size);
+	return tree_entry(&desc, &entry) && S_ISREG(entry.mode) &&
+	       !strcmp(entry.path, "message") && !tree_entry(&desc, &entry);
+}
+
+int repo_commit_context(struct repository *r, struct commit *commit,
+			struct object_id *oid)
+{
+	const char *buf = repo_get_commit_buffer(r, commit, NULL);
+	const char *value, *end;
+	size_t len, duplicate_len;
+	int ret;
+
+	value = find_commit_header(buf, "context", &len);
+	ret = value ? -2 : -1;
+	if (value && !(value[len] == '\n' &&
+		       find_commit_header(value + len + 1, "context", &duplicate_len)) &&
+	    !parse_oid_hex_algop(value, oid, &end, r->hash_algo) &&
+	    end == value + len)
+		ret = repo_is_context_checkpoint(r, oid) ? 0 : -2;
+	repo_unuse_commit_buffer(r, commit, buf);
+	return ret;
+}
+
+int repo_get_context_oid(struct repository *r, const char *name,
+			 struct object_id *oid)
+{
+	struct commit *commit;
+
+	if (repo_get_oid_commit(r, name, oid) ||
+	    !(commit = lookup_commit_reference(r, oid)))
+		return -1;
+	oidcpy(oid, &commit->object.oid);
+	return repo_is_context_checkpoint(r, oid) ? 0 : -2;
+}
+
+int repo_keep_context(struct repository *r,
+		      const struct commit_extra_header *extra,
+		      unsigned flags, struct strbuf *err)
+{
+	struct object_id oid;
+	struct strbuf ref = STRBUF_INIT;
+	const struct commit_extra_header *context = NULL;
+	const char *end, *value_end;
+	int require = 0, ret = 0;
+
+	for (; extra; extra = extra->next) {
+		if (strcmp(extra->key, "context"))
+			continue;
+		if (context) {
+			strbuf_addstr(err, _("multiple context headers"));
+			return -1;
+		}
+		context = extra;
+	}
+	extra = context;
+	if (!extra) {
+		if ((flags & KEEP_CONTEXT_REQUIRED) &&
+		    !repo_config_get_bool(r, "commit.requirecontext", &require) &&
+		    require) {
+			strbuf_addstr(err, _("commit.requireContext is set; name the "
+					     "context checkpoint with --context <commit>"));
+			return -1;
+		}
+		return 0;
+	}
+	/* Headers read back from a commit keep their newline. */
+	value_end = extra->value + extra->len;
+	if (value_end > extra->value && value_end[-1] == '\n')
+		value_end--;
+	if (parse_oid_hex_algop(extra->value, &oid, &end, r->hash_algo) ||
+	    end != value_end || !repo_is_context_checkpoint(r, &oid)) {
+		strbuf_addf(err, _("context is not a checkpoint: %.*s"),
+			    (int)(value_end - extra->value), extra->value);
+		return -1;
+	}
+	if (repo_config_get_bool(r, "commit.requirecontext", &require) || !require)
+		return 0;
+	strbuf_addf(&ref, "refs/cs/pins/%s", oid_to_hex(&oid));
+	if (refs_update_ref(get_main_ref_store(r), "commit: pin context",
+			    ref.buf, &oid, NULL, 0, UPDATE_REFS_QUIET_ON_ERR)) {
+		strbuf_addf(err, _("cannot pin context %s"), oid_to_hex(&oid));
+		ret = -1;
+	}
+	strbuf_release(&ref);
+	return ret;
+}
+
 static int convert_commit_extra_headers(const struct commit_extra_header *orig,
 					struct commit_extra_header **result)
 {
@@ -1428,6 +1543,23 @@ static int convert_commit_extra_headers(const struct commit_extra_header *orig,
 			}
 			new->key = xstrdup("mergetag");
 			new->value = strbuf_detach(&out, &new->len);
+		} else if (!strcmp(orig->key, "context")) {
+			struct object_id oid, mapped;
+			const char *end;
+			const char *value_end = orig->value + orig->len;
+
+			if (value_end > orig->value && value_end[-1] == '\n')
+				value_end--;
+			if (parse_oid_hex_algop(orig->value, &oid, &end, algo) ||
+			    end != value_end ||
+			    repo_oid_to_algop(the_repository, &oid, compat, &mapped)) {
+				free(new);
+				free_commit_extra_headers(extra);
+				return -1;
+			}
+			new->key = xstrdup("context");
+			new->value = xstrdup(oid_to_hex(&mapped));
+			new->len = strlen(new->value);
 		} else {
 			new->key = xstrdup(orig->key);
 			new->len = orig->len;

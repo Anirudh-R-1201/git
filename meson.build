@@ -2012,6 +2012,7 @@ foreach symlink : [
 endforeach
 
 scripts_sh = [
+  'git-cs.sh',
   'git-difftool--helper.sh',
   'git-filter-branch.sh',
   'git-merge-octopus.sh',

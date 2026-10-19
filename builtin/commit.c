@@ -21,6 +21,7 @@
 #include "commit.h"
 #include "add-interactive.h"
 #include "gettext.h"
+#include "hex.h"
 #include "revision.h"
 #include "wt-status.h"
 #include "run-command.h"
@@ -28,6 +29,7 @@
 #include "object-name.h"
 #include "parse-options.h"
 #include "path.h"
+#include "refs.h"
 #include "preload-index.h"
 #include "read-cache.h"
 #include "repository.h"
@@ -51,7 +53,7 @@ static const char * const builtin_commit_usage[] = {
 	   "           [--allow-empty-message] [--no-verify] [-e] [--author=<author>]\n"
 	   "           [--date=<date>] [--cleanup=<mode>] [--[no-]status]\n"
 	   "           [-i | -o] [--pathspec-from-file=<file> [--pathspec-file-nul]]\n"
-	   "           [(--trailer <token>[(=|:)<value>])...] [-S[<keyid>]]\n"
+	   "           [(--trailer <token>[(=|:)<value>])...] [--context <commit>] [-S[<keyid>]]\n"
 	   "           [--] [<pathspec>...]"),
 	NULL
 };
@@ -130,6 +132,9 @@ static int config_commit_verbose = -1; /* unspecified */
 static int no_post_rewrite, allow_empty_message, pathspec_file_nul;
 static const char *untracked_files_arg, *force_date, *ignore_submodule_arg, *ignored_arg;
 static const char *sign_commit, *pathspec_from_file;
+static const char *context_arg;
+static int require_context;
+static struct object_id context_oid;
 static struct strvec trailer_args = STRVEC_INIT;
 
 /*
@@ -1681,6 +1686,10 @@ static int git_commit_config(const char *k, const char *v,
 		FREE_AND_NULL(cleanup_config);
 		return git_config_string(&cleanup_config, k, v);
 	}
+	if (!strcmp(k, "commit.requirecontext")) {
+		require_context = git_config_bool(k, v);
+		return 0;
+	}
 	if (!strcmp(k, "commit.gpgsign")) {
 		sign_commit = git_config_bool(k, v) ? "" : NULL;
 		return 0;
@@ -1693,6 +1702,19 @@ static int git_commit_config(const char *k, const char *v,
 	}
 
 	return git_status_config(k, v, ctx, s);
+}
+
+/*
+ * Take the context of "commit" for the new one, refusing a link that does not
+ * name a checkpoint; return "name" if it has one.
+ */
+static const char *inherit_context(struct commit *commit, const char *name)
+{
+	int err = repo_commit_context(the_repository, commit, &context_oid);
+
+	if (err == -2)
+		die(_("%s has an invalid context header"), name);
+	return err ? NULL : name;
 }
 
 int cmd_commit(int argc,
@@ -1722,6 +1744,8 @@ int cmd_commit(int argc,
 		OPT_BOOL(0, "reset-author", &renew_authorship, N_("the commit is authored by me now (used with -C/-c/--amend)")),
 		OPT_STRVEC(0, "trailer", &trailer_args, N_("trailer"),
 			   N_("add custom trailer(s)")),
+		OPT_STRING(0, "context", &context_arg, N_("commit"),
+			   N_("context checkpoint this commit was made from")),
 		OPT_BOOL('s', "signoff", &signoff, N_("add a Signed-off-by trailer")),
 		OPT_FILENAME('t', "template", &template_file, N_("use specified template file")),
 		OPT_BOOL('e', "edit", &edit_flag, N_("force edit of commit")),
@@ -1821,6 +1845,32 @@ int cmd_commit(int argc,
 	argc = parse_and_validate_options(argc, argv, builtin_commit_options,
 					  builtin_commit_usage,
 					  prefix, current_head, &s);
+	if (context_arg) {
+		int err = repo_get_context_oid(the_repository, context_arg, &context_oid);
+
+		if (err == -1)
+			die(_("not a valid commit name %s"), context_arg);
+		if (err)
+			die(_("not a context checkpoint: %s"), context_arg);
+	}
+	if (!context_arg && amend)
+		context_arg = inherit_context(current_head, "HEAD");
+	if (!context_arg && !amend) {
+		/* A conflicted pick keeps the context of the commit it picks. */
+		const char *picks[] = { "CHERRY_PICK_HEAD", "REBASE_HEAD" };
+
+		for (size_t i = 0; i < ARRAY_SIZE(picks) && !context_arg; i++) {
+			struct object_id pick;
+			struct commit *c;
+
+			if (!refs_read_ref(get_main_ref_store(the_repository), picks[i], &pick) &&
+			    (c = lookup_commit_reference(the_repository, &pick)))
+				context_arg = inherit_context(c, picks[i]);
+		}
+	}
+	if (require_context && !context_arg)
+		die(_("commit.requireContext is set; name the context "
+		      "checkpoint with --context <commit>"));
 	if (trailer_args.nr)
 		trailer_config_init();
 
@@ -1928,13 +1978,25 @@ int cmd_commit(int argc,
 	}
 
 	if (amend) {
-		const char *exclude_gpgsig[3] = { "gpgsig", "gpgsig-sha256", NULL };
-		extra = read_commit_extra_headers(current_head, exclude_gpgsig);
+		const char *exclude[] = { "gpgsig", "gpgsig-sha256",
+					  context_arg ? "context" : NULL, NULL };
+		extra = read_commit_extra_headers(current_head, exclude);
 	} else {
 		struct commit_extra_header **tail = &extra;
 		append_merge_tag_headers(parents, &tail);
 	}
+	if (context_arg) {
+		struct commit_extra_header **tail = &extra;
 
+		while (*tail)
+			tail = &(*tail)->next;
+		append_context_header(&context_oid, &tail);
+	}
+
+	if (repo_keep_context(the_repository, extra, 0, &err)) {
+		rollback_index_files();
+		die("%s", err.buf);
+	}
 	if (commit_tree_extended(sb.buf, sb.len, &the_repository->index->cache_tree->oid,
 				 parents, &oid, author_ident.buf, NULL,
 				 sign_commit, extra)) {
